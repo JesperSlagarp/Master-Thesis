@@ -62,7 +62,7 @@ class ModelTrainer():
     #    df_results.to_csv(data_folder, index=False)
 
     # Stratified KFold cross validation
-    def crossval_es(self, model_base, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
+    def hpo_crossval_es(self, hp, model_base, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
         cols = ["Fold", "Train Acc", "Validation Acc", "Test Acc", "N Epochs", "Runtime"]
         if self.track_losses:
             cols.extend(["Train Losses", "Train Aug Losses", "Valid Losses"])
@@ -79,6 +79,12 @@ class ModelTrainer():
             print(unique_labels)
             
             model = clone_model(model_base)
+            model.compile(
+                optimizer=Adam(learning_rate=hp.get('lr')),
+                loss="categorical_crossentropy",
+                metrics=["accuracy"],
+            )
+
             start_time = time.time()
             train_acc, valid_acc, test_acc, n_epoch = self.crossval_train_es(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
             runtime = time.time() - start_time
@@ -98,12 +104,16 @@ class ModelTrainer():
 
         df_results.to_csv(data_folder, index=False)
 
+        mean_results = df_results.mean(axis=0)
+
+        return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
+
     def crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, batch_size_val=512):
         # Compile the model with the specified optimizer and hyperparameters
-        if self.optimizer == "Adam":
-            model.compile(loss='categorical_crossentropy', optimizer=Adam(learning_rate=self.lr), metrics=['accuracy'])
-        else:
-            model.compile(loss='categorical_crossentropy', optimizer=SGD(learning_rate=self.lr, momentum=self.momentum), metrics=['accuracy'])
+        #if self.optimizer == "Adam":
+        #    model.compile(loss='categorical_crossentropy', optimizer=Adam(learning_rate=self.lr), metrics=['accuracy'])
+        #else:
+        #    model.compile(loss='categorical_crossentropy', optimizer=SGD(learning_rate=self.lr, momentum=self.momentum), metrics=['accuracy'])
 
         # Reshape the validation datasets to fit the model's input shape
         X_valid_rs = X_valid.reshape(self.shapeX)
@@ -168,7 +178,13 @@ class ModelTrainer():
         train_acc, valid_acc, test_acc = self.eval_model_and_print_results(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
         return train_acc, valid_acc, test_acc, n_epoch
 
-    def train_es_compiled(self, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
+    def hpo_train_es(self, hp, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
+
+        model.compile(
+                optimizer=Adam(learning_rate=hp.get('lr')),
+                loss="categorical_crossentropy",
+                metrics=["accuracy"],
+            )
 
         X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy(repeat_classes= (not self.use_weights) ); #When weights are used 
         
