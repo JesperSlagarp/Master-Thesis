@@ -50,7 +50,7 @@ class fcnHyperModel(keras_tuner.HyperModel):
     
     def fit(self, hp, model, training_function, **kwargs):
         train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
-        return (-test_acc)
+        return {'Accuracy': test_acc}
 
 
 def create_fcn_model(input_shape, num_classes):

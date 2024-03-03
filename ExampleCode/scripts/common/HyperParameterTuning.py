@@ -8,6 +8,7 @@ def tune(model, search_function = "random_eval", validation = "quick", n_epochs_
 
     if(search_function == "random_eval"):
         tuner = keras_tuner.RandomSearch(
+            objective=keras_tuner.Objective('Accuracy', direction='max'),
             hypermodel=model,
             max_trials=max_trials,
             overwrite=True,
@@ -16,6 +17,7 @@ def tune(model, search_function = "random_eval", validation = "quick", n_epochs_
         )
     elif(search_function == "something"): # Place holder for something else
         tuner = keras_tuner.RandomSearch(
+            objective=keras_tuner.Objective('Accuracy', direction='max'),
             hypermodel=model,
             max_trials=max_trials,
             overwrite=True,
@@ -24,6 +26,7 @@ def tune(model, search_function = "random_eval", validation = "quick", n_epochs_
         )
     else:
         tuner = keras_tuner.RandomSearch(
+            objective=keras_tuner.Objective('Accuracy', direction='max'),
             hypermodel=model,
             max_trials=max_trials,
             overwrite=True,
