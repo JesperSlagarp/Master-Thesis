@@ -9,7 +9,7 @@ from DataLoader import DataLoader;
 from DataAugmentator import DataAugmentator;
 from sklearn.utils import class_weight
 from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
-from ModelFuncs import get_quipu_model
+#from ModelFuncs import get_quipu_model
 import time
 import numpy as np
 import pandas as pd
@@ -61,7 +61,7 @@ class ModelTrainer():
     #            df_row.to_csv(row_filename, index=False)
     #    df_results.to_csv(data_folder, index=False)
 
-    # Stratified KFold cross evaluation
+    # Stratified KFold cross validation
     def crossval_es(self, model_base, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
         cols = ["Fold", "Train Acc", "Validation Acc", "Test Acc", "N Epochs", "Runtime"]
         if self.track_losses:
@@ -168,6 +168,54 @@ class ModelTrainer():
         train_acc, valid_acc, test_acc = self.eval_model_and_print_results(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
         return train_acc, valid_acc, test_acc, n_epoch
 
+    def train_es_compiled(self, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
+
+        X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy(repeat_classes= (not self.use_weights) ); #When weights are used 
+        
+        X_valid_rs = X_valid.reshape(self.shapeX); Y_valid_rs = Y_valid.reshape(self.shapeY)
+        best_weights=model.get_weights();best_valid_loss=1e6;patience_count=0;
+        weights=class_weight.compute_class_weight(class_weight ='balanced',classes = np.arange(QUIPU_N_LABELS), y =np.argmax(Y_train,axis=1))
+        weights=dict(zip(np.arange(QUIPU_N_LABELS), weights))
+        weights_final= weights if self.use_weights else None;
+        self.train_losses=[];
+        self.valid_losses=[];
+        self.train_aug_losses=[];
+        #ipdb.set_trace();
+        for n_epoch in range(self.n_epochs_max):
+            print("=== Epoch:", n_epoch,"===")
+            start_time = time.time()
+            X= self.da.all_augments(X_train) if self.use_brow_aug else self.da.quipu_augment(X_train);
+            preparation_time = time.time() - start_time
+            # Fit the model
+            out_history = model.fit( 
+                x = X.reshape(self.shapeX), y = Y_train.reshape(self.shapeY), 
+                batch_size=self.batch_size, shuffle = True, epochs=1,verbose = 1, class_weight = weights_final, 
+            )
+            
+            print("Validation ds:")
+            valid_res=model.evaluate(x = X_valid_rs,   y = Y_valid_rs,   verbose=True,batch_size=batch_size_val);
+            if valid_res[0]<best_valid_loss:
+                best_valid_loss=valid_res[0]
+                patience_count=0;
+                best_weights=model.get_weights()
+            else:
+                patience_count+=1;
+            #Others
+            training_time = time.time() - start_time - preparation_time
+            if self.track_losses:
+                self.valid_losses.append(valid_res[0]);
+                train_res=model.evaluate(x = X_train.reshape(self.shapeX),   y = Y_train, batch_size=batch_size_val);
+                self.train_losses.append(train_res[0]);
+                self.train_aug_losses.append(out_history.history['loss'][0]);
+            
+            print('  prep time: %3.1f sec' % preparation_time, '  train time: %3.1f sec' % training_time)
+            if patience_count>self.early_stopping_patience or n_epoch==self.n_epochs_max-1:
+                print("Stopping learning because of early stopping:")
+                model.set_weights(best_weights)
+                break
+        train_acc,valid_acc,test_acc=self.eval_model_and_print_results(model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test)
+        return train_acc, valid_acc, test_acc, n_epoch
+    
     def train_es(self, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
 
         X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy(repeat_classes= (not self.use_weights) ); #When weights are used 
@@ -275,11 +323,11 @@ class ModelTrainer():
         return train_acc,valid_acc,test_acc
 
     
-if __name__ == "__main__":
-    import tensorflow as tf
-    physical_devices = tf.config.list_physical_devices('GPU')
-    tf.config.set_visible_devices(physical_devices[0], 'GPU')
-    mt=ModelTrainer();
-    model=get_quipu_model();
-    mt.n_epochs_max=3;
-    mt.crossval_es(model,n_runs=2)
+#if __name__ == "__main__":
+#    import tensorflow as tf
+#    physical_devices = tf.config.list_physical_devices('GPU')
+#    tf.config.set_visible_devices(physical_devices[0], 'GPU')
+#    mt=ModelTrainer();
+#    model=get_quipu_model();
+#    mt.n_epochs_max=3;
+#    mt.crossval_es(model,n_runs=2)

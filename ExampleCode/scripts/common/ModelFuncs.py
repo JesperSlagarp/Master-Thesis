@@ -6,6 +6,7 @@ Created on Thu Aug 24 13:23:22 2023
 """
 
 import tensorflow as tf
+import keras
 from tensorflow.keras import layers
 from tensorflow.keras import regularizers
 from tensorflow.keras.models import Sequential, Model
@@ -14,6 +15,43 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Embedding, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU
 from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
 from tensorflow.keras.regularizers import l2
+import ModelTrainer
+import keras_tuner
+
+class fcnHyperModel(keras_tuner.HyperModel):
+    def build(self, hp):
+        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+        
+        filters_block_0 = hp.Int(f"filters_block_0", min_value=32, max_value=512, step=32)
+        kernel_size_block_0 = hp.Int(f"kernel_size_block_0", min_value=3, max_value=12, step=3)
+        x = Conv1D(filters_block_0, kernel_size_block_0, padding='same')(input_trace)
+        x = layers.BatchNormalization(axis=1)(x)
+        x = Activation('relu')(x)
+
+        for i in range(hp.Int("num_layers", 2, 4)):
+            filters_block = hp.Int(f"filters_block_{i + 1}", min_value=32, max_value=512, step=32)
+            kernel_size_block = hp.Int(f"kernel_size_block_{i + 1}", min_value=3, max_value=12, step=3)
+            x = Conv1D(128, 8, padding='same')(x)
+            x = layers.BatchNormalization(axis=1)(x)
+            x = Activation('relu')(x)
+        
+        x = GlobalAveragePooling1D()(x)
+
+        output_barcode = Dense(QUIPU_N_LABELS, activation='softmax', name='output_barcode')(x)
+        model = Model(inputs=input_trace, outputs=output_barcode)
+
+        learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
+        model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+        loss="categorical_crossentropy",
+        metrics=["accuracy"],
+        )
+        return model
+    
+    def fit(self, hp, model, training_function, **kwargs):
+        train_acc, valid_acc, test_acc, n_epoch = training_function(model)
+        return (-test_acc)
+
 
 def create_fcn_model(input_shape, num_classes):
     model = Sequential([
