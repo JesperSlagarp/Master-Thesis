@@ -154,3 +154,5 @@ cython_debug/
 *.hdf5
 
 ExampleCode/results/*
+
+*.zip

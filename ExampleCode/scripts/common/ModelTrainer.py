@@ -105,7 +105,7 @@ class ModelTrainer():
         df_results.to_csv(data_folder, index=False)
 
         mean_results = df_results.mean(axis=0)
-
+        
         return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
 
     def crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, batch_size_val=512):

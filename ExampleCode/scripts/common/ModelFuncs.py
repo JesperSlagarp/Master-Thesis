@@ -12,7 +12,7 @@ from tensorflow.keras import regularizers
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Activation, Dropout, Flatten, Input, Embedding,BatchNormalization
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, Embedding, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Embedding, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU, Add, Reshape, LSTM, concatenate, LayerNormalization, MultiHeadAttention
 from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
 from tensorflow.keras.regularizers import l2
 import ModelTrainer
@@ -20,17 +20,13 @@ import keras_tuner
 
 class fcnHyperModel(keras_tuner.HyperModel):
     def build(self, hp):
-        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
-        
-        filters_block_0 = hp.Int(f"filters_block_0", min_value=64, max_value=256, step=64)
-        kernel_size_block_0 = hp.Int(f"kernel_size_block_0", min_value=3, max_value=7, step=2)
-        x = Conv1D(filters_block_0, kernel_size_block_0, padding='same')(input_trace)
-        x = layers.BatchNormalization(axis=1)(x)
-        x = Activation('relu')(x)
 
-        for i in range(hp.Int("num_layers", 2, 5)):
-            filters_block = hp.Int(f"filters_block_{i + 1}", min_value=64, max_value=256, step=64)
-            kernel_size_block = hp.Int(f"kernel_size_block_{i + 1}", min_value=3, max_value=7, step=2)
+        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+        x = input_trace
+
+        for i in range(hp.Int("num_layers", min_value = 3, max_value = 6, step = 1)):
+            filters_block = hp.Choice(f"filters_block_{i}", [32, 64, 128, 256])
+            kernel_size_block = hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=7, step=2)
             x = Conv1D(filters_block, kernel_size_block, padding='same')(x)
             x = layers.BatchNormalization(axis=1)(x)
             x = Activation('relu')(x)
@@ -51,6 +47,160 @@ class fcnHyperModel(keras_tuner.HyperModel):
     def fit(self, hp, model, training_function, **kwargs):
         train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
         return {'Accuracy': test_acc}
+    
+class resNetHyperModel(keras_tuner.HyperModel):
+
+    def build(self, hp):
+
+        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+
+        x = input_trace
+
+        num_blocks = hp.Int("num_blocks", min_value = 2, max_value = 4, step = 1)
+
+        for i in range(num_blocks):
+            filters = hp.Int(f"filters_block_{i}", min_value = 32, max_value = 256, step = 32)
+            kernel_size_0 = hp.Int(f"kernel_size_0_block_{i}", min_value = 3, max_value = 11, step = 2)
+            kernel_size_1 = hp.Int(f"kernel_size_1_block_{i}", min_value = 3, max_value = 11, step = 2)
+            kernel_size_2 = hp.Int(f"kernel_size_2_block_{i}", min_value = 3, max_value = 11, step = 2)
+            x = self.residual_block(x, filters=filters, kernel_size_0=kernel_size_0, kernel_size_1 = kernel_size_1, kernel_size_2 = kernel_size_2)
+
+        x = GlobalAveragePooling1D()(x)
+        output_barcode = Dense(QUIPU_N_LABELS, activation='softmax', name='output_barcode')(x)
+        model = Model(inputs=input_trace, outputs=output_barcode)
+
+        learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
+
+        return model
+    
+    @staticmethod
+    def residual_block(input_tensor, filters, kernel_size_0, kernel_size_1, kernel_size_2):
+        # First component of the main path
+        x = Conv1D(filters=filters, kernel_size=kernel_size_0, padding='same')(input_tensor)
+        x = BatchNormalization()(x)
+        x = ReLU()(x)
+
+        # Second component
+        x = Conv1D(filters=filters, kernel_size=kernel_size_1, padding='same')(x)
+        x = BatchNormalization()(x)
+        x = ReLU()(x)
+
+        # Third component
+        x = Conv1D(filters=filters, kernel_size=kernel_size_2, padding='same')(x)
+        x = BatchNormalization()(x)
+
+        # Shortcut path
+        shortcut = Conv1D(filters=filters, kernel_size=1, padding='same')(input_tensor)
+        shortcut = BatchNormalization()(shortcut)
+
+        # Adding shortcut to the main path
+        x = Add()([x, shortcut])
+        x = ReLU()(x)
+        
+        return x
+    
+    def fit(self, hp, model, training_function, **kwargs):
+        train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
+        return {'Accuracy': test_acc}
+    
+class fcnLstmHyperModel(keras_tuner.HyperModel):
+
+    def build(self, hp):
+
+        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+
+        # FCN Block
+        kernel_size_0 = hp.Int(f"kernel_size_0", min_value = 3, max_value = 11, step = 2)
+        kernel_size_1 = hp.Int(f"kernel_size_1", min_value = 3, max_value = 11, step = 2)
+        kernel_size_2 = hp.Int(f"kernel_size_2", min_value = 3, max_value = 11, step = 2)
+
+        x = Conv1D(filters=128, kernel_size=kernel_size_0, padding='same')(input_trace)
+        x = BatchNormalization()(x)
+        x = ReLU()(x)
+
+        x = Conv1D(filters=256, kernel_size=kernel_size_1, padding='same')(x)
+        x = BatchNormalization()(x)
+        x = ReLU()(x)
+
+        x = Conv1D(filters=128, kernel_size=kernel_size_2, padding='same')(x)
+        x = BatchNormalization()(x)
+        fcn_output = ReLU()(x)
+
+        # FCN output goes into Global Average Pooling
+        gap = GlobalAveragePooling1D()(fcn_output)
+
+        # LSTM Block
+        # Reshape for LSTM input
+        x = Reshape((QUIPU_LEN_CUT, 1))(input_trace)  # Adjust based on actual input requirement for LSTM
+        x = LSTM(hp.Int('lstm_units', min_value=32, max_value=256, step=32))(x)
+        lstm_output = Dropout(hp.Float('lstm_dropout', min_value=0.0, max_value=0.5, step=0.1))(x)
+
+        # Concatenate FCN and LSTM outputs
+        concatenated = concatenate([gap, lstm_output])
+
+        # Output layer
+        output = Dense(QUIPU_N_LABELS, activation='softmax', name='output')(concatenated)
+
+        model = Model(inputs=input_trace, outputs=output)
+
+        learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
+
+        return model
+    
+    
+    def fit(self, hp, model, training_function, **kwargs):
+        train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
+        return {'Accuracy': test_acc}
+    
+class transformerHyperModel(keras_tuner.HyperModel): #Something's wrong, will fix later
+
+    def build(self, hp):
+        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+
+        # Hyperparameters
+        head_size = hp.Int('head_size', min_value=32, max_value=128, step=32)
+        num_heads = hp.Int('num_heads', min_value=2, max_value=8, step=2)
+        ff_dim = hp.Int('ff_dim', min_value=32, max_value=128, step=32)
+        num_transformer_blocks = 2#hp.Int('num_transformer_blocks', min_value=1, max_value=4, step=1)
+        dropout_rate = hp.Float('dropout_rate', min_value=0.0, max_value=0.5, step=0.1)
+
+        # Transformer blocks
+        x = input_trace
+        for _ in range(num_transformer_blocks):
+            x = self.transformer_encoder(x, head_size, num_heads, ff_dim, dropout=dropout_rate)
+
+        x = layers.GlobalAveragePooling1D()(x)
+
+        output = Dense(QUIPU_N_LABELS, activation='softmax', name='output')(x)
+        model = Model(inputs=input_trace, outputs=output)
+
+        lr = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
+
+        return model
+    
+    @staticmethod
+    def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
+        # Attention and Normalization
+        x = layers.MultiHeadAttention(
+            key_dim=head_size, num_heads=num_heads, dropout=dropout
+        )(inputs, inputs)
+        x = layers.Dropout(dropout)(x)
+        x = layers.LayerNormalization(epsilon=1e-6)(x)
+        res = x + inputs
+
+        # Feed Forward Part
+        x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
+        x = layers.Dropout(dropout)(x)
+        x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
+        x = layers.LayerNormalization(epsilon=1e-6)(x)
+        return x + res
+    
+    
+    def fit(self, hp, model, training_function, **kwargs):
+        train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
+        return {'Accuracy': test_acc}
+    
+
 
 
 def create_fcn_model(input_shape, num_classes):
