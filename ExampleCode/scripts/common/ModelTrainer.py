@@ -40,29 +40,8 @@ class ModelTrainer():
     def num_list_to_str(self,num_list):
         return '[{:s}]'.format(' '.join(['{:.3f}'.format(x) for x in num_list]))
     
-    #def crossval_es(self,model_base, n_splits=5, data_folder='../results/QuipuTrainedWithES.csv',save_each_row=False):
-    #    cols=["Train Acc", "Validation acc", "Test Acc","N Epochs", "Runtime"]
-    #    if self.track_losses:
-    #        cols.append("Train Losses");cols.append("Train Aug Losses");cols.append("Valid Losses");
-    #    df_results = pd.DataFrame(0, index=np.arange(n_runs), columns=cols)
-    #    for i in range(n_runs):
-    #        start_time = time.time()
-    #        model=clone_model(model_base); # https://stackoverflow.com/questions/40496069/reset-weights-in-keras-layer Reinitializes model
-    #        train_acc, valid_acc, test_acc, n_epoch = self.train_es(model)
-    #        runtime = time.time() - start_time 
-    #        row=[train_acc,valid_acc,test_acc,n_epoch,runtime];
-    #        if self.track_losses:
-    #            row.append(self.num_list_to_str(self.train_losses));row.append(self.num_list_to_str(self.train_aug_losses));
-    #            row.append(self.num_list_to_str(self.valid_losses));
-    #        df_results.loc[i]=row;
-    #        if save_each_row:
-    #            row_filename=data_folder[:-4]+"_"+str(i)+".csv";
-    #            df_row=df_results.iloc[i,:];
-    #            df_row.to_csv(row_filename, index=False)
-    #    df_results.to_csv(data_folder, index=False)
-
     # Stratified KFold cross validation
-    def hpo_crossval_es(self, hp, model_base, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
+    def hpo_crossval_es(self, trial, hypermodel, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
         cols = ["Fold", "Train Acc", "Validation Acc", "Test Acc", "N Epochs", "Runtime"]
         if self.track_losses:
             cols.extend(["Train Losses", "Train Aug Losses", "Valid Losses"])
@@ -74,16 +53,9 @@ class ModelTrainer():
         for fold_index in range(n_splits):
             print(f"Starting fold {fold_index + 1}")
             
-            X_train, X_valid, Y_train, Y_valid = self.dl.get_datasets_numpy_kfold(trainSet, fold_index, n_splits, repeat_classes=True)
-            unique_labels = np.unique(np.argmax(Y_train, axis=1))
-            print(unique_labels)
+            X_train, X_valid, Y_train, Y_valid = self.dl.get_datasets_numpy_kfold(trainSet, fold_index, n_splits)
             
-            model = clone_model(model_base)
-            model.compile(
-                optimizer=Adam(learning_rate=hp.get('lr')),
-                loss="categorical_crossentropy",
-                metrics=["accuracy"],
-            )
+            model = hypermodel.build(trial.hyperparameters)
 
             start_time = time.time()
             train_acc, valid_acc, test_acc, n_epoch = self.crossval_train_es(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
@@ -109,11 +81,6 @@ class ModelTrainer():
         return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
 
     def crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, batch_size_val=512):
-        # Compile the model with the specified optimizer and hyperparameters
-        #if self.optimizer == "Adam":
-        #    model.compile(loss='categorical_crossentropy', optimizer=Adam(learning_rate=self.lr), metrics=['accuracy'])
-        #else:
-        #    model.compile(loss='categorical_crossentropy', optimizer=SGD(learning_rate=self.lr, momentum=self.momentum), metrics=['accuracy'])
 
         # Reshape the validation datasets to fit the model's input shape
         X_valid_rs = X_valid.reshape(self.shapeX)
@@ -180,11 +147,13 @@ class ModelTrainer():
 
     def hpo_train_es(self, hp, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
 
-        model.compile(
-                optimizer=Adam(learning_rate=hp.get('lr')),
-                loss="categorical_crossentropy",
-                metrics=["accuracy"],
-            )
+        #model.compile(
+        #        optimizer=Adam(learning_rate=hp.get('lr')),
+        #        loss="categorical_crossentropy",
+        #        metrics=["accuracy"],
+        #    )
+
+        #model.build(hp)
 
         X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy(repeat_classes= (not self.use_weights) ); #When weights are used 
         

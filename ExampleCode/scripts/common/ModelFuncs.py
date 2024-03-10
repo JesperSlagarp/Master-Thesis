@@ -18,16 +18,60 @@ from tensorflow.keras.regularizers import l2
 import ModelTrainer
 import keras_tuner
 
+def build_model(hp):
+    dnn_layers_ss = [1,2,3]
+    dnn_units_min, dnn_units_max = 32, 512
+    dropout_ss = [0.1, 0.2]
+    active_func_ss = ['relu', 'tanh']
+    optimizer_ss = ['adam']
+    lr_min, lr_max = 1e-4, 1e-1
+    
+    active_func = hp.Choice('activation', active_func_ss)
+    optimizer = hp.Choice('optimizer', optimizer_ss)
+    lr = hp.Float('learning_rate', min_value=lr_min, max_value=lr_max, sampling='log')
+    
+    input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+    flatten_layer = tf.keras.layers.Flatten()(input_trace)
+    
+    # create hidden layers
+    dnn_units = hp.Int(f"0_units", min_value=dnn_units_min, max_value=dnn_units_max)
+    dense = tf.keras.layers.Dense(units=dnn_units, activation=active_func)(flatten_layer)
+    for layer_i in range(hp.Choice("n_layers", dnn_layers_ss) - 1):
+        dnn_units = hp.Int(f"{layer_i}_units", min_value=dnn_units_min, max_value=dnn_units_max)
+        dense = tf.keras.layers.Dense(units=dnn_units, activation=active_func)(dense)
+        if hp.Boolean("dropout"):
+            dense = tf.keras.layers.Dropout(rate=0.25)(dense)
+    output_barcode = Dense(QUIPU_N_LABELS, activation='softmax', name='output_barcode')(dense)
+    model = Model(inputs=input_trace, outputs=output_barcode)
+    
+    if optimizer == "adam":
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    elif optimizer == "SGD":
+        optimizer = tf.keras.optimizers.SGD(learning_rate=lr)
+    else:
+        raise("Not supported optimizer")
+        
+    model.compile(optimizer=optimizer,
+                  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                  metrics=['accuracy'])
+    return model
+
 class fcnHyperModel(keras_tuner.HyperModel):
     def build(self, hp):
 
         input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
         x = input_trace
 
-        for i in range(hp.Int("num_layers", min_value = 3, max_value = 6, step = 1)):
-            filters_block = hp.Choice(f"filters_block_{i}", [32, 64, 128, 256])
-            kernel_size_block = hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=7, step=2)
-            x = Conv1D(filters_block, kernel_size_block, padding='same')(x)
+        min_layers = 3
+        max_layers = 6
+        num_layers = hp.Int("num_layers", min_layers, max_layers)
+
+        for i in range(max_layers): #Because keras_tuner seems to have a bug
+            hp.Choice(f"filters_block_{i}", [32, 64, 128, 256])
+            hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=7, step=2)
+        
+        for i in range(num_layers):
+            x = Conv1D(hp.get(f"filters_block_{i}"), hp.get(f"kernel_size_block_{i}"), padding='same')(x)
             x = layers.BatchNormalization(axis=1)(x)
             x = Activation('relu')(x)
         
@@ -37,14 +81,15 @@ class fcnHyperModel(keras_tuner.HyperModel):
         model = Model(inputs=input_trace, outputs=output_barcode)
 
         learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
-        #model.compile(
-        #    optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
-        #    loss="categorical_crossentropy",
-        #    metrics=["accuracy"],
-        #)
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            loss="categorical_crossentropy",
+            metrics=["accuracy"],
+        )
         return model
     
     def fit(self, hp, model, training_function, **kwargs):
+        model.summary()
         train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
         return {'Accuracy': test_acc}
     

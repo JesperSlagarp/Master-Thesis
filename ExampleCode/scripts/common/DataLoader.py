@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 
-from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 from params import QUIPU_DATA_FOLDER,QUIPU_VALIDATION_PROP_DEF,QUIPU_N_LABELS
 from DatasetFuncs import allDataset_loader,dataset_split
 import ipdb
@@ -21,37 +21,20 @@ class DataLoader():
         X_train,X_valid,Y_train,Y_valid=self.divide_numpy_ds(X_train,Y_train,1-validation_prop,keep_perc_classes=True,repeat_classes=repeat_classes);
         return X_train,X_valid,Y_train,Y_valid,X_test,Y_test
 
-    def get_datasets_numpy_kfold(self, dataset, fold_index, n_splits, repeat_classes=True):
+    def get_datasets_numpy_kfold(self, dataset, fold_index, n_splits):
 
-        X, Y = self.quipu_df_to_numpy(dataset)#self.df_cut)  # Convert dataset to numpy arrays
+        X, Y = self.quipu_df_to_numpy(dataset)
     
-        # If X retains the original order of self.df_cut? you can use:
-        #groups = dataset['nanopore'].to_numpy()  # Extract nanopore groups
-
         sgkf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
         y_labels = np.argmax(Y, axis=1) if Y.ndim > 1 else Y
 
-        #fold = 0
-        #for train_idx, test_idx in sgkf.split(X, y_labels, groups):
-        #    train_groups = set(groups[train_idx])
-        #    test_groups = set(groups[test_idx])
-        #
-        #    common_groups = train_groups.intersection(test_groups)
-        #    if common_groups:
-        #        print(f"Leakage found in fold {fold+1}: Groups {common_groups} appear in both training and testing sets.")
-        #    else:
-        #        print(f"No leakage in fold {fold+1}.")
-        #    fold += 1
-
         fold_counter = 0
-        for train_index, test_index in sgkf.split(X, y_labels):#, groups):
+        for train_index, test_index in sgkf.split(X, y_labels):
             if fold_counter == fold_index:
-                # Split data into training and testing based on groups
                 X_train, Y_train = X[train_index], Y[train_index]
                 X_valid, Y_valid = X[test_index], Y[test_index]
-
-                return X_train, X_valid, Y_train, Y_valid#, X_test, Y_test
+                return X_train, X_valid, Y_train, Y_valid
             fold_counter += 1
 
         
