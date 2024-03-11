@@ -187,7 +187,7 @@ class transformerHyperModel(keras_tuner.HyperModel):
             hp.Choice(f"mlp_dim_{i}", values=[64,128,256])
 
         for i in range(mlp_layers):
-            x = layers.Dense(hp.Get(f"mlp_dim_{i}"), activation="relu")(x)
+            x = layers.Dense(hp.get(f"mlp_dim_{i}"), activation="relu")(x)
             x = layers.Dropout(mlp_dropout)(x)
 
         output = layers.Dense(QUIPU_N_LABELS, activation="softmax")(x)

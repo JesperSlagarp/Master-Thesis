@@ -5,18 +5,21 @@ Created on Thu Aug 24 15:04:26 2023
 @author: JK-WORK
 """
 
+from keras.callbacks import TensorBoard
 from DataLoader import DataLoader;
 from DataAugmentator import DataAugmentator;
 from sklearn.utils import class_weight
+from sklearn.model_selection import StratifiedKFold
 from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
 #from ModelFuncs import get_quipu_model
 import time
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 from tensorflow.keras.optimizers import Adam,SGD
 from tensorflow.keras.models import clone_model
 from DatasetFuncs import dataset_split
-import ipdb
+import ipdb, os
 
 
 class ModelTrainer():
@@ -41,7 +44,8 @@ class ModelTrainer():
         return '[{:s}]'.format(' '.join(['{:.3f}'.format(x) for x in num_list]))
     
     # Stratified KFold cross validation
-    def hpo_crossval_es(self, trial, hypermodel, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
+    def hpo_crossval(self, trial, hypermodel, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
+
         cols = ["Fold", "Train Acc", "Validation Acc", "Test Acc", "N Epochs", "Runtime"]
         if self.track_losses:
             cols.extend(["Train Losses", "Train Aug Losses", "Valid Losses"])
@@ -50,15 +54,23 @@ class ModelTrainer():
         trainSet, testSet = dataset_split(self.dl.df_cut)
         X_test, Y_test = self.dl.quipu_df_to_numpy(testSet)
 
-        for fold_index in range(n_splits):
-            print(f"Starting fold {fold_index + 1}")
+        # KFOLD PREP #
+        X_trainSet, Y_trainSet = self.dl.quipu_df_to_numpy(trainSet)
+        sgkf = StratifiedKFold(n_splits=n_splits, shuffle=True)
+        y_labels = np.argmax(Y_trainSet, axis=1) if Y_trainSet.ndim > 1 else Y_trainSet
+
+        fold_index = 0
+        for train_index, test_index in sgkf.split(X_trainSet, y_labels):
             
-            X_train, X_valid, Y_train, Y_valid = self.dl.get_datasets_numpy_kfold(trainSet, fold_index, n_splits)
+            print(f"Starting fold {fold_index + 1}")
+
+            X_train, Y_train = X_trainSet[train_index], Y_trainSet[train_index]
+            X_valid, Y_valid = X_trainSet[test_index], Y_trainSet[test_index]
             
             model = hypermodel.build(trial.hyperparameters)
 
             start_time = time.time()
-            train_acc, valid_acc, test_acc, n_epoch = self.crossval_train_es(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
+            train_acc, valid_acc, test_acc, n_epoch = self.hpo_crossval_train_es(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial.trial_id, fold_index)
             runtime = time.time() - start_time
             
             row = [fold_index + 1, train_acc, valid_acc, test_acc, n_epoch, runtime]
@@ -72,6 +84,8 @@ class ModelTrainer():
                 df_row = pd.DataFrame([row], columns=cols)
                 df_row.to_csv(row_filename, index=False)
 
+            fold_index += 1
+
         df_results.loc[len(df_results)] = df_results.mean(axis=0)
 
         df_results.to_csv(data_folder, index=False)
@@ -80,7 +94,7 @@ class ModelTrainer():
         
         return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
 
-    def crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, batch_size_val=512):
+    def hpo_crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial, fold, batch_size_val=512):
 
         # Reshape the validation datasets to fit the model's input shape
         X_valid_rs = X_valid.reshape(self.shapeX)
@@ -103,7 +117,7 @@ class ModelTrainer():
 
         # Training loop with early stopping
         for n_epoch in range(self.n_epochs_max):
-            print("=== Epoch:", n_epoch, "===")
+            print("=== Epoch:", n_epoch + 1, "===")
             start_time = time.time()
 
             # Apply data augmentation if specified
@@ -128,6 +142,15 @@ class ModelTrainer():
             training_time = time.time() - start_time - preparation_time
             print('  prep time: %3.1f sec' % preparation_time, '  train time: %3.1f sec' % training_time)
 
+            # TensorBoard Logging
+            metrics = {
+                'train_loss': out_history.history['loss'][0],
+                'val_loss': valid_res[0],
+                'train_accuracy': out_history.history['accuracy'][0],
+                'val_accuracy': valid_res[1],
+            }
+            log_tensorboard(metrics, get_log_dir(trial, fold), n_epoch)
+
             # Early stopping condition
             if patience_count > self.early_stopping_patience or n_epoch == self.n_epochs_max - 1:
                 print("Stopping learning because of early stopping:")
@@ -141,64 +164,9 @@ class ModelTrainer():
                 self.train_losses.append(train_res[0])
                 self.train_aug_losses.append(out_history.history['loss'][0])
 
+
         # Evaluate the model on training, validation, and test datasets to get the final accuracies
         train_acc, valid_acc, test_acc = self.eval_model_and_print_results(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
-        return train_acc, valid_acc, test_acc, n_epoch
-
-    def hpo_train_es(self, hp, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
-
-        #model.compile(
-        #        optimizer=Adam(learning_rate=hp.get('lr')),
-        #        loss="categorical_crossentropy",
-        #        metrics=["accuracy"],
-        #    )
-
-        #model.build(hp)
-
-        X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy(repeat_classes= (not self.use_weights) ); #When weights are used 
-        
-        X_valid_rs = X_valid.reshape(self.shapeX); Y_valid_rs = Y_valid.reshape(self.shapeY)
-        best_weights=model.get_weights();best_valid_loss=1e6;patience_count=0;
-        weights=class_weight.compute_class_weight(class_weight ='balanced',classes = np.arange(QUIPU_N_LABELS), y =np.argmax(Y_train,axis=1))
-        weights=dict(zip(np.arange(QUIPU_N_LABELS), weights))
-        weights_final= weights if self.use_weights else None;
-        self.train_losses=[];
-        self.valid_losses=[];
-        self.train_aug_losses=[];
-        #ipdb.set_trace();
-        for n_epoch in range(self.n_epochs_max):
-            print("=== Epoch:", n_epoch,"===")
-            start_time = time.time()
-            X= self.da.all_augments(X_train) if self.use_brow_aug else self.da.quipu_augment(X_train);
-            preparation_time = time.time() - start_time
-            # Fit the model
-            out_history = model.fit( 
-                x = X.reshape(self.shapeX), y = Y_train.reshape(self.shapeY), 
-                batch_size=self.batch_size, shuffle = True, epochs=1,verbose = 1, class_weight = weights_final, 
-            )
-            
-            print("Validation ds:")
-            valid_res=model.evaluate(x = X_valid_rs,   y = Y_valid_rs,   verbose=True,batch_size=batch_size_val);
-            if valid_res[0]<best_valid_loss:
-                best_valid_loss=valid_res[0]
-                patience_count=0;
-                best_weights=model.get_weights()
-            else:
-                patience_count+=1;
-            #Others
-            training_time = time.time() - start_time - preparation_time
-            if self.track_losses:
-                self.valid_losses.append(valid_res[0]);
-                train_res=model.evaluate(x = X_train.reshape(self.shapeX),   y = Y_train, batch_size=batch_size_val);
-                self.train_losses.append(train_res[0]);
-                self.train_aug_losses.append(out_history.history['loss'][0]);
-            
-            print('  prep time: %3.1f sec' % preparation_time, '  train time: %3.1f sec' % training_time)
-            if patience_count>self.early_stopping_patience or n_epoch==self.n_epochs_max-1:
-                print("Stopping learning because of early stopping:")
-                model.set_weights(best_weights)
-                break
-        train_acc,valid_acc,test_acc=self.eval_model_and_print_results(model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test)
         return train_acc, valid_acc, test_acc, n_epoch
     
     def train_es(self, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
@@ -306,6 +274,36 @@ class ModelTrainer():
         print("Test :", test_results )
         train_acc= train_results[1];valid_acc= valid_results[1];test_acc= test_results[1];
         return train_acc,valid_acc,test_acc
+    
+def log_tensorboard(metrics, log_dir, step):
+        """
+        Logs custom metrics to TensorBoard.
+        
+        Args:
+        - metrics (dict): A dictionary of metric names and their values.
+        - log_dir (str): The directory where the TensorBoard logs will be stored.
+        - step (int): The global step or epoch for which metrics are logged.
+        """
+        writer = tf.summary.create_file_writer(log_dir)
+        with writer.as_default():
+            for key, value in metrics.items():
+                tf.summary.scalar(key, value, step=step)
+            writer.flush()
+    
+def get_log_dir(trial_id, fold_index):
+    """
+    Returns a unique log directory path for each trial and fold.
+    
+    Args:
+    - trial_id (str): Identifier for the trial.
+    - fold_index (int): The index of the fold in cross-validation.
+    
+    Returns:
+    - str: The path to the log directory.
+    """
+    log_dir = f"../../tmp/tb_logs/trial_{trial_id}/fold_{fold_index}"
+    os.makedirs(log_dir, exist_ok=True)
+    return log_dir
 
     
 #if __name__ == "__main__":
