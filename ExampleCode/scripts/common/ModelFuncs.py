@@ -7,7 +7,7 @@ Created on Thu Aug 24 13:23:22 2023
 
 import tensorflow as tf
 import keras
-from tensorflow.keras import layers
+from tensorflow.keras import layers, models
 from tensorflow.keras import regularizers
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Activation, Dropout, Flatten, Input, Embedding,BatchNormalization
@@ -15,46 +15,9 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Embedding, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU, Add, Reshape, LSTM, concatenate, LayerNormalization, MultiHeadAttention
 from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
 from tensorflow.keras.regularizers import l2
+import numpy as np
 import ModelTrainer
 import keras_tuner
-
-def build_model(hp):
-    dnn_layers_ss = [1,2,3]
-    dnn_units_min, dnn_units_max = 32, 512
-    dropout_ss = [0.1, 0.2]
-    active_func_ss = ['relu', 'tanh']
-    optimizer_ss = ['adam']
-    lr_min, lr_max = 1e-4, 1e-1
-    
-    active_func = hp.Choice('activation', active_func_ss)
-    optimizer = hp.Choice('optimizer', optimizer_ss)
-    lr = hp.Float('learning_rate', min_value=lr_min, max_value=lr_max, sampling='log')
-    
-    input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
-    flatten_layer = tf.keras.layers.Flatten()(input_trace)
-    
-    # create hidden layers
-    dnn_units = hp.Int(f"0_units", min_value=dnn_units_min, max_value=dnn_units_max)
-    dense = tf.keras.layers.Dense(units=dnn_units, activation=active_func)(flatten_layer)
-    for layer_i in range(hp.Choice("n_layers", dnn_layers_ss) - 1):
-        dnn_units = hp.Int(f"{layer_i}_units", min_value=dnn_units_min, max_value=dnn_units_max)
-        dense = tf.keras.layers.Dense(units=dnn_units, activation=active_func)(dense)
-        if hp.Boolean("dropout"):
-            dense = tf.keras.layers.Dropout(rate=0.25)(dense)
-    output_barcode = Dense(QUIPU_N_LABELS, activation='softmax', name='output_barcode')(dense)
-    model = Model(inputs=input_trace, outputs=output_barcode)
-    
-    if optimizer == "adam":
-        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-    elif optimizer == "SGD":
-        optimizer = tf.keras.optimizers.SGD(learning_rate=lr)
-    else:
-        raise("Not supported optimizer")
-        
-    model.compile(optimizer=optimizer,
-                  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                  metrics=['accuracy'])
-    return model
 
 class fcnHyperModel(keras_tuner.HyperModel):
     def build(self, hp):
@@ -87,11 +50,7 @@ class fcnHyperModel(keras_tuner.HyperModel):
             metrics=["accuracy"],
         )
         return model
-    
-    def fit(self, hp, model, training_function, **kwargs):
-        model.summary()
-        train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
-        return {'Accuracy': test_acc}
+
     
 class resNetHyperModel(keras_tuner.HyperModel):
 
@@ -101,14 +60,22 @@ class resNetHyperModel(keras_tuner.HyperModel):
 
         x = input_trace
 
-        num_blocks = hp.Int("num_blocks", min_value = 2, max_value = 4, step = 1)
+        min_blocks = 3
+        max_blocks = 6
+        num_blocks = hp.Int("num_blocks", min_value = min_blocks, max_value = max_blocks, step = 1)
 
-        for i in range(num_blocks):
+        for i in range(max_blocks): #Because keras_tuner seems to have a bug
             filters = hp.Int(f"filters_block_{i}", min_value = 32, max_value = 256, step = 32)
             kernel_size_0 = hp.Int(f"kernel_size_0_block_{i}", min_value = 3, max_value = 11, step = 2)
             kernel_size_1 = hp.Int(f"kernel_size_1_block_{i}", min_value = 3, max_value = 11, step = 2)
             kernel_size_2 = hp.Int(f"kernel_size_2_block_{i}", min_value = 3, max_value = 11, step = 2)
-            x = self.residual_block(x, filters=filters, kernel_size_0=kernel_size_0, kernel_size_1 = kernel_size_1, kernel_size_2 = kernel_size_2)
+
+        for i in range(num_blocks):
+            x = self.residual_block(x, 
+                filters = hp.get(f"filters_block_{i}"), 
+                kernel_size_0 = hp.get(f"kernel_size_0_block_{i}"), 
+                kernel_size_1 = hp.get(f"kernel_size_1_block_{i}"), 
+                kernel_size_2 = hp.get(f"kernel_size_2_block_{i}"))
 
         x = GlobalAveragePooling1D()(x)
         output_barcode = Dense(QUIPU_N_LABELS, activation='softmax', name='output_barcode')(x)
@@ -143,10 +110,7 @@ class resNetHyperModel(keras_tuner.HyperModel):
         x = ReLU()(x)
         
         return x
-    
-    def fit(self, hp, model, training_function, **kwargs):
-        train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
-        return {'Accuracy': test_acc}
+
     
 class fcnLstmHyperModel(keras_tuner.HyperModel):
 
@@ -171,7 +135,6 @@ class fcnLstmHyperModel(keras_tuner.HyperModel):
         x = BatchNormalization()(x)
         fcn_output = ReLU()(x)
 
-        # FCN output goes into Global Average Pooling
         gap = GlobalAveragePooling1D()(fcn_output)
 
         # LSTM Block
@@ -191,82 +154,82 @@ class fcnLstmHyperModel(keras_tuner.HyperModel):
         learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
 
         return model
-    
-    
-    def fit(self, hp, model, training_function, **kwargs):
-        train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
-        return {'Accuracy': test_acc}
-    
-class transformerHyperModel(keras_tuner.HyperModel): #Something's wrong, will fix later
+
+class transformerHyperModel(keras_tuner.HyperModel):
 
     def build(self, hp):
-        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
 
-        # Hyperparameters
-        head_size = hp.Int('head_size', min_value=32, max_value=128, step=32)
-        num_heads = hp.Int('num_heads', min_value=2, max_value=8, step=2)
-        ff_dim = hp.Int('ff_dim', min_value=32, max_value=128, step=32)
-        num_transformer_blocks = 2#hp.Int('num_transformer_blocks', min_value=1, max_value=4, step=1)
-        dropout_rate = hp.Float('dropout_rate', min_value=0.0, max_value=0.5, step=0.1)
+        head_size = 32
+        num_heads = hp.Choice('num_heads', values=[2, 4, 8])
+        ff_dim = hp.Int('ff_dim', min_value=256, max_value=1024, step=128)
+        num_transformer_blocks = hp.Int('num_transformer_blocks', min_value=1, max_value=6, step=1)
+        min_mlp_layers = 1
+        max_mlp_layers = 3
+        mlp_layers = hp.Int("mlp_layers", min_mlp_layers, max_mlp_layers)
+        mlp_dropout = hp.Float('mlp_dropout', min_value=0.1, max_value=0.5, step=0.1)
+        dropout = hp.Float('dropout', min_value=0.1, max_value=0.5, step=0.1)
+        embed_dim = hp.Choice('embed_dim', values=[128, 256, 512])
 
-        # Transformer blocks
+        positional_encoding = self.get_positional_encoding(QUIPU_LEN_CUT, embed_dim)
+    
+        input_trace = keras.Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
         x = input_trace
+        
+        pos_encoding = layers.Embedding(input_dim=QUIPU_LEN_CUT, output_dim=embed_dim, weights=[positional_encoding], trainable=False)(tf.range(0, QUIPU_LEN_CUT))
+        x += pos_encoding
+
         for _ in range(num_transformer_blocks):
-            x = self.transformer_encoder(x, head_size, num_heads, ff_dim, dropout=dropout_rate)
+            x = self.transformer_encoder(x, head_size, num_heads, ff_dim, dropout)
 
-        x = layers.GlobalAveragePooling1D()(x)
+        x = layers.GlobalAveragePooling1D(data_format="channels_last")(x)
 
-        output = Dense(QUIPU_N_LABELS, activation='softmax', name='output')(x)
+        for i in range(max_mlp_layers):
+            hp.Choice(f"mlp_dim_{i}", values=[64,128,256])
+
+        for i in range(mlp_layers):
+            x = layers.Dense(hp.Get(f"mlp_dim_{i}"), activation="relu")(x)
+            x = layers.Dropout(mlp_dropout)(x)
+
+        output = layers.Dense(QUIPU_N_LABELS, activation="softmax")(x)
         model = Model(inputs=input_trace, outputs=output)
 
-        lr = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
+        learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
 
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            loss="categorical_crossentropy",
+            metrics=["accuracy"],
+        )
         return model
     
     @staticmethod
     def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
-        # Attention and Normalization
+        # Multi-Head Attention and Normalization
         x = layers.MultiHeadAttention(
             key_dim=head_size, num_heads=num_heads, dropout=dropout
         )(inputs, inputs)
         x = layers.Dropout(dropout)(x)
         x = layers.LayerNormalization(epsilon=1e-6)(x)
-        res = x + inputs
+        res = x + inputs  # Add & Norm
 
-        # Feed Forward Part
-        x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
+        # Position-wise Feed-Forward Network
+        x = layers.Dense(ff_dim, activation="relu")(res)  # First dense layer with ReLU
         x = layers.Dropout(dropout)(x)
-        x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
+        x = layers.Dense(inputs.shape[-1])(x)  # Second dense layer
         x = layers.LayerNormalization(epsilon=1e-6)(x)
-        return x + res
+        return x + res  # Add & Norm
     
+    @staticmethod
+    def get_positional_encoding(max_seq_len, embed_dim):
+        positional_encoding = np.array([
+            [pos / np.power(10000, 2 * (j // 2) / embed_dim) for j in range(embed_dim)]
+            if pos != 0 else np.zeros(embed_dim) 
+            for pos in range(max_seq_len)
+            ])
+        positional_encoding[1:, 0::2] = np.sin(positional_encoding[1:, 0::2])  # dim 2i
+        positional_encoding[1:, 1::2] = np.cos(positional_encoding[1:, 1::2])  # dim 2i+1
+        return tf.cast(positional_encoding, dtype=tf.float32)
     
-    def fit(self, hp, model, training_function, **kwargs):
-        train_acc, valid_acc, test_acc, n_epoch = training_function(hp, model)
-        return {'Accuracy': test_acc}
-    
-
-
-
-def create_fcn_model(input_shape, num_classes):
-    model = Sequential([
-        Conv1D(128, 8, padding='same', input_shape=input_shape),
-        BatchNormalization(),
-        ReLU(),
-        Conv1D(256, 5, padding='same'),
-        BatchNormalization(),
-        ReLU(),
-        Conv1D(128, 3, padding='same'),
-        BatchNormalization(),
-        ReLU(),
-        Conv1D(128, 3, padding='same'),
-        BatchNormalization(),
-        ReLU(),
-        GlobalAveragePooling1D(),
-        Dense(num_classes, activation='softmax')
-    ])
-    return model
-
 ##### QUIPUNET ###############
 def get_quipu_model(n_filters_block_1=64,kernel_size_block_1=7,dropout_intermediate_blocks=0.25,
                     n_filters_block_2=128,kernel_size_block_2=5,n_filters_block_3=256,kernel_size_block_3=3,

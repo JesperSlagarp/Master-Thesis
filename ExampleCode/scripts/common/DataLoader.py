@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, KFold
 from params import QUIPU_DATA_FOLDER,QUIPU_VALIDATION_PROP_DEF,QUIPU_N_LABELS
 from DatasetFuncs import allDataset_loader,dataset_split
 import ipdb
@@ -25,7 +25,7 @@ class DataLoader():
 
         X, Y = self.quipu_df_to_numpy(dataset)
     
-        sgkf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        sgkf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
         y_labels = np.argmax(Y, axis=1) if Y.ndim > 1 else Y
 
