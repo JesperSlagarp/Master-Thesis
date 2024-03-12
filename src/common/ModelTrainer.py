@@ -176,10 +176,10 @@ class ModelTrainer():
     def train_es(self, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
 
         X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy(repeat_classes= (not self.use_weights) ); #When weights are used 
-        if self.optimizer=="Adam":
-            model.compile(loss = 'categorical_crossentropy', optimizer = Adam(learning_rate=self.lr),metrics = ['accuracy'])
-        else:
-            model.compile(loss = 'categorical_crossentropy', optimizer = SGD(learning_rate=self.lr,momentum=self.momentum),metrics = ['accuracy'])
+        #if self.optimizer=="Adam":
+        #    model.compile(loss = 'categorical_crossentropy', optimizer = Adam(learning_rate=self.lr),metrics = ['accuracy'])
+        #else:
+        #    model.compile(loss = 'categorical_crossentropy', optimizer = SGD(learning_rate=self.lr,momentum=self.momentum),metrics = ['accuracy'])
         X_valid_rs = X_valid.reshape(self.shapeX); Y_valid_rs = Y_valid.reshape(self.shapeY)
         best_weights=model.get_weights();best_valid_loss=1e6;patience_count=0;
         weights=class_weight.compute_class_weight(class_weight ='balanced',classes = np.arange(QUIPU_N_LABELS), y =np.argmax(Y_train,axis=1))

@@ -14,26 +14,32 @@ class CVTuner(kerastuner.engine.tuner.Tuner):
 
     self.oracle.update_trial(trial.trial_id, {'val_accuracy': test_acc})
 
-def tune(model, search_function = "random", n_epochs_max = 10, max_trials = 10, batch_size = 128):
-    mt = ModelTrainer(n_epochs_max=n_epochs_max)
+class Tuner():
 
+  def __init__(self, model, search_function = "random", n_epochs_max = 10, max_trials = 10, batch_size = 128):
+    self.model = model
+    self.search_function = search_function
+    self.n_epochs_max = n_epochs_max
+    self.max_trials = max_trials
+    self.batch_size = batch_size
+   
+  def get_tuner(self):
     oracle = None
-
-    if search_function == "random":
-      oracle = kerastuner.oracles.RandomSearchOracle(objective='val_accuracy',max_trials=max_trials)
-    elif search_function == "bayesian":
-      oracle = kerastuner.oracles.BayesianOptimizationOracle(objective='val_accuracy',max_trials=max_trials)
+    if self.search_function == "random":
+        oracle = kerastuner.oracles.RandomSearchOracle(objective='val_accuracy',max_trials=self.max_trials)
+    elif self.search_function == "bayesian":
+      oracle = kerastuner.oracles.BayesianOptimizationOracle(objective='val_accuracy',max_trials=self.max_trials)
     else:
-      oracle = kerastuner.oracles.RandomSearchOracle(objective='val_accuracy',max_trials=max_trials)
+      oracle = kerastuner.oracles.RandomSearchOracle(objective='val_accuracy',max_trials=self.max_trials)
+    return CVTuner(
+            hypermodel=self.model,
+            overwrite=False,
+            directory="../../results",
+            project_name=self.model.__class__.__name__,
+            oracle=oracle)
 
-    tuner = CVTuner(
-        hypermodel=model,
-        overwrite=False,
-        directory="../../results",
-        project_name=model.__class__.__name__,
-        oracle=oracle)
-
-    tuner.search(batch_size=batch_size,
-                 n_epochs_max=n_epochs_max)    
-
-    tuner.results_summary()
+  def tune(self):
+      tuner = self.get_tuner(self.model, self.search_function)
+      tuner.search(batch_size=self.batch_size,
+                  n_epochs_max=self.n_epochs_max)    
+      tuner.results_summary()
