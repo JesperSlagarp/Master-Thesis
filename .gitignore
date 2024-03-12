@@ -153,6 +153,7 @@ cython_debug/
 
 *.hdf5
 
-ExampleCode/results/*
+results/*
 *.csv
 *.zip
+tmp/*

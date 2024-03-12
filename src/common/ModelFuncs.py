@@ -7,19 +7,16 @@ Created on Thu Aug 24 13:23:22 2023
 
 import tensorflow as tf
 import keras
-from tensorflow.keras import layers, models
-from tensorflow.keras import regularizers
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Dense, Activation, Dropout, Flatten, Input, Embedding,BatchNormalization
+from tensorflow.keras import layers
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, Embedding, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU, Add, Reshape, LSTM, concatenate, LayerNormalization, MultiHeadAttention
-from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
+from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
+from tensorflow.keras.layers import Dense, Activation, Dropout, Flatten, Input, BatchNormalization, MultiHeadAttention, LayerNormalization, Conv1D, MaxPooling1D, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU, Add, Reshape, LSTM, concatenate
+from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
 import numpy as np
-import ModelTrainer
 import keras_tuner
 
-class fcnHyperModel(keras_tuner.HyperModel):
+class FCN(keras_tuner.HyperModel):
     def build(self, hp):
 
         input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
@@ -45,14 +42,14 @@ class fcnHyperModel(keras_tuner.HyperModel):
 
         learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
         model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            optimizer=Adam(learning_rate=learning_rate),
             loss="categorical_crossentropy",
             metrics=["accuracy"],
         )
         return model
 
     
-class resNetHyperModel(keras_tuner.HyperModel):
+class ResNet(keras_tuner.HyperModel):
 
     def build(self, hp):
 
@@ -83,6 +80,12 @@ class resNetHyperModel(keras_tuner.HyperModel):
 
         learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
 
+        model.compile(
+            optimizer=Adam(learning_rate=learning_rate),
+            loss="categorical_crossentropy",
+            metrics=["accuracy"],
+        )
+
         return model
     
     @staticmethod
@@ -112,7 +115,7 @@ class resNetHyperModel(keras_tuner.HyperModel):
         return x
 
     
-class fcnLstmHyperModel(keras_tuner.HyperModel):
+class LSTM_FCN(keras_tuner.HyperModel):
 
     def build(self, hp):
 
@@ -153,9 +156,15 @@ class fcnLstmHyperModel(keras_tuner.HyperModel):
 
         learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
 
+        model.compile(
+            optimizer=Adam(learning_rate=learning_rate),
+            loss="categorical_crossentropy",
+            metrics=["accuracy"],
+        )
+
         return model
 
-class transformerHyperModel(keras_tuner.HyperModel):
+class Transformer(keras_tuner.HyperModel):
 
     def build(self, hp):
 
@@ -196,27 +205,28 @@ class transformerHyperModel(keras_tuner.HyperModel):
         learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
 
         model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            optimizer=Adam(learning_rate=learning_rate),
             loss="categorical_crossentropy",
             metrics=["accuracy"],
         )
+
         return model
     
     @staticmethod
     def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
         # Multi-Head Attention and Normalization
-        x = layers.MultiHeadAttention(
+        x = MultiHeadAttention(
             key_dim=head_size, num_heads=num_heads, dropout=dropout
         )(inputs, inputs)
-        x = layers.Dropout(dropout)(x)
-        x = layers.LayerNormalization(epsilon=1e-6)(x)
+        x = Dropout(dropout)(x)
+        x = LayerNormalization(epsilon=1e-6)(x)
         res = x + inputs  # Add & Norm
 
         # Position-wise Feed-Forward Network
-        x = layers.Dense(ff_dim, activation="relu")(res)  # First dense layer with ReLU
-        x = layers.Dropout(dropout)(x)
-        x = layers.Dense(inputs.shape[-1])(x)  # Second dense layer
-        x = layers.LayerNormalization(epsilon=1e-6)(x)
+        x = Dense(ff_dim, activation="relu")(res)  # First dense layer with ReLU
+        x = Dropout(dropout)(x)
+        x = Dense(inputs.shape[-1])(x)  # Second dense layer
+        x = LayerNormalization(epsilon=1e-6)(x)
         return x + res  # Add & Norm
     
     @staticmethod

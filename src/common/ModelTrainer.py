@@ -17,7 +17,6 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam,SGD
-from tensorflow.keras.models import clone_model
 from DatasetFuncs import dataset_split
 import ipdb, os
 
@@ -115,6 +114,9 @@ class ModelTrainer():
         self.valid_losses = []
         self.train_aug_losses = []
 
+        # Total cumulative runtime for fold
+        cumulative_runtime = 0
+
         # Training loop with early stopping
         for n_epoch in range(self.n_epochs_max):
             print("=== Epoch:", n_epoch + 1, "===")
@@ -141,6 +143,7 @@ class ModelTrainer():
             # Track preparation and training time
             training_time = time.time() - start_time - preparation_time
             print('  prep time: %3.1f sec' % preparation_time, '  train time: %3.1f sec' % training_time)
+            cumulative_runtime += training_time
 
             # TensorBoard Logging
             metrics = {
@@ -148,6 +151,7 @@ class ModelTrainer():
                 'val_loss': valid_res[0],
                 'train_accuracy': out_history.history['accuracy'][0],
                 'val_accuracy': valid_res[1],
+                'runtime' : cumulative_runtime
             }
             log_tensorboard(metrics, get_log_dir(trial, fold), n_epoch)
 
