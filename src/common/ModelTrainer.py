@@ -87,7 +87,7 @@ class ModelTrainer():
 
         df_results.loc[len(df_results)] = df_results.mean(axis=0)
 
-        df_results.to_csv(data_folder, index=False)
+        ##df_results.to_csv(data_folder, index=False)
 
         mean_results = df_results.mean(axis=0)
         

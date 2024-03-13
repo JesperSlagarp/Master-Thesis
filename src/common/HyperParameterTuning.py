@@ -39,7 +39,7 @@ class Tuner():
             oracle=oracle)
 
   def tune(self):
-      tuner = self.get_tuner(self.model, self.search_function)
+      tuner = self.get_tuner()
       tuner.search(batch_size=self.batch_size,
                   n_epochs_max=self.n_epochs_max)    
       tuner.results_summary()
