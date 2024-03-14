@@ -5,6 +5,9 @@ Created on Thu Aug 24 15:04:26 2023
 @author: JK-WORK
 """
 
+from collections import defaultdict
+import pprint
+import struct
 from keras.callbacks import TensorBoard
 from DataLoader import DataLoader;
 from DataAugmentator import DataAugmentator;
@@ -61,7 +64,7 @@ class ModelTrainer():
         fold_index = 0
         for train_index, test_index in sgkf.split(X_trainSet, y_labels):
             
-            print(f"Starting fold {fold_index + 1}")
+            print(f"Starting fold {fold_index}")
 
             X_train, Y_train = X_trainSet[train_index], Y_trainSet[train_index]
             X_valid, Y_valid = X_trainSet[test_index], Y_trainSet[test_index]
@@ -72,14 +75,14 @@ class ModelTrainer():
             train_acc, valid_acc, test_acc, n_epoch = self.hpo_crossval_train_es(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial.trial_id, fold_index)
             runtime = time.time() - start_time
             
-            row = [fold_index + 1, train_acc, valid_acc, test_acc, n_epoch, runtime]
+            row = [fold_index, train_acc, valid_acc, test_acc, n_epoch, runtime]
             if self.track_losses:
                 row.extend([self.num_list_to_str(self.train_losses), self.num_list_to_str(self.train_aug_losses), self.num_list_to_str(self.valid_losses)])
             temp_df = pd.DataFrame([row], columns=cols)
             df_results.loc[len(df_results)] = row
             
             if save_each_fold:
-                row_filename = f"{data_folder[:-4]}_fold{fold_index+1}.csv"
+                row_filename = f"{data_folder[:-4]}_fold{fold_index}.csv"
                 df_row = pd.DataFrame([row], columns=cols)
                 df_row.to_csv(row_filename, index=False)
 
@@ -90,6 +93,8 @@ class ModelTrainer():
         ##df_results.to_csv(data_folder, index=False)
 
         mean_results = df_results.mean(axis=0)
+
+        log_tensorboard_averages(get_log_dir(trial.trial_id), get_log_dir(trial.trial_id, tag="averages"))
         
         return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
 
@@ -119,7 +124,7 @@ class ModelTrainer():
 
         # Training loop with early stopping
         for n_epoch in range(self.n_epochs_max):
-            print("=== Epoch:", n_epoch + 1, "===")
+            print("=== Epoch:", n_epoch, "===")
             start_time = time.time()
 
             # Apply data augmentation if specified
@@ -293,21 +298,94 @@ def log_tensorboard(metrics, log_dir, step):
             for key, value in metrics.items():
                 tf.summary.scalar(key, value, step=step)
             writer.flush()
-    
-def get_log_dir(trial_id, fold_index):
+
+def log_tensorboard_averages(log_dir_from, log_dir_to):
     """
-    Returns a unique log directory path for each trial and fold.
+    Reads metrics from TensorBoard logs, calculates averages, and logs those averages to a new TensorBoard log directory.
     
     Args:
-    - trial_id (str): Identifier for the trial.
-    - fold_index (int): The index of the fold in cross-validation.
-    
-    Returns:
-    - str: The path to the log directory.
+    - log_dir_from (str): The directory from which to read the original TensorBoard logs.
+    - log_dir_to (str): The directory where the averaged TensorBoard logs will be stored.
     """
-    log_dir = f"../../tmp/tb_logs/trial_{trial_id}/fold_{fold_index}"
+
+    # Read and parse the original metrics
+    original_metrics = read_tensorboard_scalars(log_dir_from)
+
+    # Aggregate and calculate averages
+    averaged_metrics = aggregate_metrics(original_metrics)
+    print(averaged_metrics)
+
+    # Log the averaged metrics
+    log_averaged_metrics(averaged_metrics, log_dir_to)
+
+    
+def get_log_dir(trial_id, fold_index=-1, tag="all"):
+    """Returns a unique log directory path for each trial and fold."""
+    base_dir = "../../tmp"
+    
+    if tag == "all":
+        log_dir = os.path.join(base_dir, f"tb_logs/trial_{trial_id}")
+    else:
+        log_dir = os.path.join(base_dir, f"tb_logs_{tag}/trial_{trial_id}")
+    
+    if fold_index != -1:
+        log_dir = os.path.join(log_dir, f"fold_{fold_index}")
+    
     os.makedirs(log_dir, exist_ok=True)
     return log_dir
+
+def parse_tf_event(event):
+    """Parse a single TensorFlow event into a (tag, value, step) tuple."""
+    for value in event.summary.value:
+        if value.metadata.plugin_data.plugin_name == "scalars":
+            if value.tensor.dtype == tf.float32.as_datatype_enum and value.tensor.tensor_content:
+                unpacked_value = struct.unpack('f', value.tensor.tensor_content)[0]
+                yield (value.tag, unpacked_value, event.step)
+
+def read_tensorboard_scalars(log_dir):
+    """Read scalar metrics from a TensorBoard log directory."""
+    metrics = []
+    event_files = tf.io.gfile.glob(f"{log_dir}/**/*")
+    for event_file in event_files:
+        for event in tf.data.TFRecordDataset(event_file):
+            event = tf.compat.v1.Event.FromString(event.numpy())
+            for tag, value, step in parse_tf_event(event):
+                metrics.append((tag, value, step))
+    return metrics
+
+def aggregate_metrics(metrics):
+    """Aggregate metrics by tag and step, then calculate averages."""
+    aggregated_metrics = {}  # {tag: {step: [values]}}
+    print(metrics)
+    # Correctly unpack and aggregate metrics
+    for tag, value, step in metrics:
+        if tag not in aggregated_metrics:
+            aggregated_metrics[tag] = {}
+        if step not in aggregated_metrics[tag]:
+            aggregated_metrics[tag][step] = []
+        aggregated_metrics[tag][step].append(value)
+
+    print(aggregated_metrics)
+    
+    # Calculate averages and standard deviations
+    stats_metrics = {}  # {tag: [(step, avg_value, std_dev)]}
+    for tag, steps in aggregated_metrics.items():
+        [print(f"{step}, {values}") for step, values in steps.items()]
+        stats_metrics[tag] = [(step, np.mean(values), np.std(values)) for step, values in steps.items()]
+    
+    return stats_metrics
+
+def log_averaged_metrics(stats_metrics, log_dir_to):
+    """Log the averaged metrics and their standard deviations at their corresponding steps."""
+    writer = tf.summary.create_file_writer(log_dir_to)
+    with writer.as_default():
+        for tag, step_values in stats_metrics.items():
+            for step, avg_value, std_dev in sorted(step_values, key=lambda x: x[0]):
+                # Log the average value
+                tf.summary.scalar(f"{tag}_mean", avg_value, step=step)
+                # Log the standard deviation
+                tf.summary.scalar(f"{tag}_stddev", std_dev, step=step)
+        writer.flush()
 
     
 #if __name__ == "__main__":

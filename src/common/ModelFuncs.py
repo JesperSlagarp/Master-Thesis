@@ -22,13 +22,13 @@ class FCN(keras_tuner.HyperModel):
         input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
         x = input_trace
 
-        min_layers = 3
-        max_layers = 6
+        min_layers = 4
+        max_layers = 8
         num_layers = hp.Int("num_layers", min_layers, max_layers)
 
         for i in range(max_layers): #Because keras_tuner seems to have a bug
-            hp.Choice(f"filters_block_{i}", [32, 64, 128, 256])
-            hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=7, step=2)
+            hp.Choice(f"filters_block_{i}", [32, 64, 128, 256, 512])
+            hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=11, step=2)
         
         for i in range(num_layers):
             x = Conv1D(hp.get(f"filters_block_{i}"), hp.get(f"kernel_size_block_{i}"), padding='same')(x)
