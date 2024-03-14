@@ -6,7 +6,6 @@ Created on Thu Aug 24 15:04:26 2023
 """
 
 from collections import defaultdict
-import pprint
 import struct
 from keras.callbacks import TensorBoard
 from DataLoader import DataLoader;
@@ -307,28 +306,21 @@ def log_tensorboard_averages(log_dir_from, log_dir_to):
     - log_dir_from (str): The directory from which to read the original TensorBoard logs.
     - log_dir_to (str): The directory where the averaged TensorBoard logs will be stored.
     """
-
-    # Read and parse the original metrics
     original_metrics = read_tensorboard_scalars(log_dir_from)
-
-    # Aggregate and calculate averages
     averaged_metrics = aggregate_metrics(original_metrics)
-    print(averaged_metrics)
-
-    # Log the averaged metrics
     log_averaged_metrics(averaged_metrics, log_dir_to)
 
     
-def get_log_dir(trial_id, fold_index=-1, tag="all"):
+def get_log_dir(trial_id, fold_index = None, tag = None):
     """Returns a unique log directory path for each trial and fold."""
     base_dir = "../../tmp"
     
-    if tag == "all":
+    if tag == None:
         log_dir = os.path.join(base_dir, f"tb_logs/trial_{trial_id}")
     else:
         log_dir = os.path.join(base_dir, f"tb_logs_{tag}/trial_{trial_id}")
     
-    if fold_index != -1:
+    if fold_index != None:
         log_dir = os.path.join(log_dir, f"fold_{fold_index}")
     
     os.makedirs(log_dir, exist_ok=True)
@@ -356,7 +348,6 @@ def read_tensorboard_scalars(log_dir):
 def aggregate_metrics(metrics):
     """Aggregate metrics by tag and step, then calculate averages."""
     aggregated_metrics = {}  # {tag: {step: [values]}}
-    print(metrics)
     # Correctly unpack and aggregate metrics
     for tag, value, step in metrics:
         if tag not in aggregated_metrics:
@@ -364,13 +355,10 @@ def aggregate_metrics(metrics):
         if step not in aggregated_metrics[tag]:
             aggregated_metrics[tag][step] = []
         aggregated_metrics[tag][step].append(value)
-
-    print(aggregated_metrics)
     
     # Calculate averages and standard deviations
     stats_metrics = {}  # {tag: [(step, avg_value, std_dev)]}
     for tag, steps in aggregated_metrics.items():
-        [print(f"{step}, {values}") for step, values in steps.items()]
         stats_metrics[tag] = [(step, np.mean(values), np.std(values)) for step, values in steps.items()]
     
     return stats_metrics
@@ -381,9 +369,7 @@ def log_averaged_metrics(stats_metrics, log_dir_to):
     with writer.as_default():
         for tag, step_values in stats_metrics.items():
             for step, avg_value, std_dev in sorted(step_values, key=lambda x: x[0]):
-                # Log the average value
                 tf.summary.scalar(f"{tag}_mean", avg_value, step=step)
-                # Log the standard deviation
                 tf.summary.scalar(f"{tag}_stddev", std_dev, step=step)
         writer.flush()
 
