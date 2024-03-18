@@ -26,7 +26,7 @@ from tensorflow.keras.utils import Sequence
 
 
 class ModelTrainer():
-    def __init__(self, use_fixed_length_data = False, use_brow_aug = False, n_epochs_max=100,lr = 1e-3,batch_size=128,early_stopping_patience=100,use_weights=False,track_losses=False, optimizer="Adam",momentum=None, model_name = "model"): #Opt_aug still has bugs, have to check
+    def __init__(self, use_fixed_length_data = True, use_brow_aug = False, n_epochs_max=100,lr = 1e-3,batch_size=128,early_stopping_patience=100,use_weights=False,track_losses=False, optimizer="Adam",momentum=None, model_name = "model"): #Opt_aug still has bugs, have to check
         self.use_fixed_length_data = use_fixed_length_data
         self.use_brow_aug = use_brow_aug;
         self.dl=DataLoader();
@@ -57,9 +57,9 @@ class ModelTrainer():
         df_results = pd.DataFrame(columns=cols)
         
         if self.use_fixed_length_data:
-            trainSet, testSet = dataset_split(self.dl.df_padded)
-        else:
             trainSet, testSet = dataset_split(self.dl.df_cut)
+        else:
+            trainSet, testSet = dataset_split(self.dl.df_padded)
 
         X_test, Y_test = self.dl.quipu_df_to_numpy(testSet)
 
