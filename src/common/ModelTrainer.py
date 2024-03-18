@@ -21,10 +21,13 @@ import tensorflow as tf
 from tensorflow.keras.optimizers import Adam,SGD
 from DatasetFuncs import dataset_split
 import ipdb, os
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.utils import Sequence
 
 
 class ModelTrainer():
-    def __init__(self, use_brow_aug = False, n_epochs_max=100,lr = 1e-3,batch_size=128,early_stopping_patience=100,use_weights=False,track_losses=False, optimizer="Adam",momentum=None): #Opt_aug still has bugs, have to check
+    def __init__(self, use_fixed_length_data = False, use_brow_aug = False, n_epochs_max=100,lr = 1e-3,batch_size=128,early_stopping_patience=100,use_weights=False,track_losses=False, optimizer="Adam",momentum=None, model_name = "model"): #Opt_aug still has bugs, have to check
+        self.use_fixed_length_data = use_fixed_length_data
         self.use_brow_aug = use_brow_aug;
         self.dl=DataLoader();
         self.da=DataAugmentator();
@@ -40,6 +43,7 @@ class ModelTrainer():
         self.track_losses=track_losses;
         self.optimizer=optimizer;
         self.momentum=momentum;
+        self.model_name = model_name
     
     def num_list_to_str(self,num_list):
         return '[{:s}]'.format(' '.join(['{:.3f}'.format(x) for x in num_list]))
@@ -52,7 +56,11 @@ class ModelTrainer():
             cols.extend(["Train Losses", "Train Aug Losses", "Valid Losses"])
         df_results = pd.DataFrame(columns=cols)
         
-        trainSet, testSet = dataset_split(self.dl.df_cut)
+        if self.use_fixed_length_data:
+            trainSet, testSet = dataset_split(self.dl.df_padded)
+        else:
+            trainSet, testSet = dataset_split(self.dl.df_cut)
+
         X_test, Y_test = self.dl.quipu_df_to_numpy(testSet)
 
         # KFOLD PREP #
@@ -67,7 +75,7 @@ class ModelTrainer():
 
             X_train, Y_train = X_trainSet[train_index], Y_trainSet[train_index]
             X_valid, Y_valid = X_trainSet[test_index], Y_trainSet[test_index]
-            
+
             model = hypermodel.build(trial.hyperparameters)
 
             start_time = time.time()
@@ -93,15 +101,15 @@ class ModelTrainer():
 
         mean_results = df_results.mean(axis=0)
 
-        log_tensorboard_averages(get_log_dir(trial.trial_id), get_log_dir(trial.trial_id, tag="averages"))
+        log_tensorboard_averages(get_log_dir(trial.trial_id, model_name=self.model_name), get_log_dir(trial.trial_id, model_name=self.model_name, tag="averages"))
         
         return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
 
     def hpo_crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial, fold, batch_size_val=512):
 
         # Reshape the validation datasets to fit the model's input shape
-        X_valid_rs = X_valid.reshape(self.shapeX)
-        Y_valid_rs = Y_valid.reshape(self.shapeY)
+        #X_valid_rs = X_valid.reshape(self.shapeX)
+        #Y_valid_rs = Y_valid.reshape(self.shapeY)
 
         # Initialize variables for early stopping and best model weights tracking
         best_weights = model.get_weights()
@@ -131,12 +139,11 @@ class ModelTrainer():
             preparation_time = time.time() - start_time
 
             # Fit the model for one epoch
-            out_history = model.fit(x=X.reshape(self.shapeX), y=Y_train.reshape(self.shapeY), batch_size=self.batch_size,
-                                    shuffle=True, epochs=1, verbose=1, class_weight=weights_final)
+            out_history = model.fit(x = X, y = Y_train, batch_size = self.batch_size, shuffle=True, epochs=1, verbose=1, class_weight=weights_final)
 
             # Evaluate on the validation dataset
             print("Validation ds:")
-            valid_res = model.evaluate(x=X_valid_rs, y=Y_valid_rs, verbose=True, batch_size=batch_size_val)
+            valid_res = model.evaluate(x=X_valid, y=Y_valid, verbose=True, batch_size=batch_size_val)
             if valid_res[0] < best_valid_loss:
                 best_valid_loss = valid_res[0]
                 patience_count = 0
@@ -157,7 +164,7 @@ class ModelTrainer():
                 'val_accuracy': valid_res[1],
                 'runtime' : cumulative_runtime
             }
-            log_tensorboard(metrics, get_log_dir(trial, fold), n_epoch)
+            log_tensorboard(metrics, get_log_dir(trial, self.model_name, fold), n_epoch)
 
             # Early stopping condition
             if patience_count > self.early_stopping_patience or n_epoch == self.n_epochs_max - 1:
@@ -273,9 +280,9 @@ class ModelTrainer():
     
     def eval_model_and_print_results(self,model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test):
         print("       [ loss , accuracy ]")
-        train_results= model.evaluate(x = X_train.reshape(self.shapeX), y = Y_train, verbose=False);
-        valid_results=model.evaluate(x = X_valid.reshape(self.shapeX),   y = Y_valid,   verbose=False)
-        test_results= model.evaluate(x = X_test.reshape(self.shapeX),  y = Y_test,  verbose=False)
+        train_results= model.evaluate(x = X_train, y = Y_train, verbose=False);
+        valid_results=model.evaluate(x = X_valid,   y = Y_valid,   verbose=False)
+        test_results= model.evaluate(x = X_test,  y = Y_test,  verbose=False)
         
         print("Train:", train_results )
         print("Validation  :", valid_results )
@@ -311,14 +318,14 @@ def log_tensorboard_averages(log_dir_from, log_dir_to):
     log_averaged_metrics(averaged_metrics, log_dir_to)
 
     
-def get_log_dir(trial_id, fold_index = None, tag = None):
+def get_log_dir(trial_id, model_name, fold_index = None, tag = None):
     """Returns a unique log directory path for each trial and fold."""
-    base_dir = "../../tmp"
+    base_dir = f"../../results/"
     
     if tag == None:
-        log_dir = os.path.join(base_dir, f"tb_logs/trial_{trial_id}")
+        log_dir = os.path.join(base_dir, f"tb_logs/{model_name}/trial_{trial_id}")
     else:
-        log_dir = os.path.join(base_dir, f"tb_logs_{tag}/trial_{trial_id}")
+        log_dir = os.path.join(base_dir, f"tb_logs/{model_name}_{tag}/trial_{trial_id}")
     
     if fold_index != None:
         log_dir = os.path.join(log_dir, f"fold_{fold_index}")
@@ -372,8 +379,7 @@ def log_averaged_metrics(stats_metrics, log_dir_to):
                 tf.summary.scalar(f"{tag}_mean", avg_value, step=step)
                 tf.summary.scalar(f"{tag}_stddev", std_dev, step=step)
         writer.flush()
-
-    
+        
 #if __name__ == "__main__":
 #    import tensorflow as tf
 #    physical_devices = tf.config.list_physical_devices('GPU')

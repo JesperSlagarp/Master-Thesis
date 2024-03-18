@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import tensorflow as tf
 import os
 
 from params import QUIPU_DATA_FOLDER,QUIPU_VALIDATION_PROP_DEF,QUIPU_N_LABELS
@@ -13,6 +14,15 @@ class DataLoader():
         self.reduce_dataset_samples=reduce_dataset_samples;
         self.df_cut=allDataset_loader(QUIPU_DATA_FOLDER,cut=True); #Loads both datasets to the class
         self.df_uncut=allDataset_loader(QUIPU_DATA_FOLDER,cut=False);
+        self.df_padded = self.pad_dataset(self.df_uncut)
+
+    def pad_dataset(self, df):
+        max_length = df['trace'].apply(len).max()
+
+        df_padded = df.copy()
+        df_padded['trace'] = df['trace'].apply(lambda x: list(x) + [0] * (max_length - len(x)))
+
+        return df_padded
         
     def get_datasets_numpy(self,validation_prop=0.15,repeat_classes=True): #Gets the numpy arrays for the NN repeating samples per class so all have the same "weight", and also separates into validation keeping the same percentage of samples per class.
         df_train,df_test=dataset_split(self.df_cut,min_perc=self.min_perc_test,max_perc=self.max_perc_test);
@@ -33,7 +43,19 @@ class DataLoader():
         Y_onehot = np.zeros((Y_label.size, Y_label.max() + 1))
         Y_onehot[np.arange(Y_label.size), Y_label] = 1
         return X_numpy,Y_onehot;
-    
+
+    def quipu_df_to_numpy_variable(self, df):
+        # Keep X as a list of numpy arrays (or lists) to preserve variable lengths
+        X_numpy = list(df.trace.values)
+        
+        # Process barcodes to one-hot encoding as before
+        Y_barcode = np.vstack(df.barcode.values)
+        Y_label = np.asarray([int(str(i[0]), 2) for i in Y_barcode])
+        Y_onehot = np.zeros((Y_label.size, Y_label.max() + 1))
+        Y_onehot[np.arange(Y_label.size), Y_label] = 1
+        
+        return X_numpy, Y_onehot
+
     def divide_numpy_ds(self,X,Y,prop,keep_perc_classes=False,repeat_classes=False): #Divides train in train and validation. Prop indicates proportion of train ds
     #keep perc classes assures that the classes are equally percentally distributed in train and valid dataset.
     #repeat_classes repeats reads so each class has the same amount of samples

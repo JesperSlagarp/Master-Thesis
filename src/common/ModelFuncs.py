@@ -11,7 +11,7 @@ from tensorflow.keras import layers
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
-from tensorflow.keras.layers import Dense, Activation, Dropout, Flatten, Input, BatchNormalization, MultiHeadAttention, LayerNormalization, Conv1D, MaxPooling1D, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU, Add, Reshape, LSTM, concatenate
+from tensorflow.keras.layers import Lambda, Masking, Dense, Activation, Dropout, Flatten, Input, BatchNormalization, MultiHeadAttention, LayerNormalization, Conv1D, MaxPooling1D, AveragePooling1D, GlobalAveragePooling1D, Dense, ReLU, Add, Reshape, LSTM, concatenate
 from params import QUIPU_LEN_CUT,QUIPU_N_LABELS
 import numpy as np
 import keras_tuner
@@ -19,7 +19,7 @@ import keras_tuner
 class FCN(keras_tuner.HyperModel):
     def build(self, hp):
 
-        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+        input_trace = Input(shape=(None,1), dtype='float32', name='input',)
         x = input_trace
 
         min_layers = 4
@@ -28,11 +28,11 @@ class FCN(keras_tuner.HyperModel):
 
         for i in range(max_layers): #Because keras_tuner seems to have a bug
             hp.Choice(f"filters_block_{i}", [32, 64, 128, 256, 512])
-            hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=11, step=2)
+            hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=15, step=2)
         
         for i in range(num_layers):
             x = Conv1D(hp.get(f"filters_block_{i}"), hp.get(f"kernel_size_block_{i}"), padding='same')(x)
-            x = layers.BatchNormalization(axis=1)(x)
+            x = BatchNormalization()(x)
             x = Activation('relu')(x)
         
         x = GlobalAveragePooling1D()(x)
@@ -53,7 +53,7 @@ class ResNet(keras_tuner.HyperModel):
 
     def build(self, hp):
 
-        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+        input_trace = Input(shape=(None,1), dtype='float32', name='input')
 
         x = input_trace
 
@@ -62,10 +62,10 @@ class ResNet(keras_tuner.HyperModel):
         num_blocks = hp.Int("num_blocks", min_value = min_blocks, max_value = max_blocks, step = 1)
 
         for i in range(max_blocks): #Because keras_tuner seems to have a bug
-            filters = hp.Int(f"filters_block_{i}", min_value = 32, max_value = 256, step = 32)
-            kernel_size_0 = hp.Int(f"kernel_size_0_block_{i}", min_value = 3, max_value = 11, step = 2)
-            kernel_size_1 = hp.Int(f"kernel_size_1_block_{i}", min_value = 3, max_value = 11, step = 2)
-            kernel_size_2 = hp.Int(f"kernel_size_2_block_{i}", min_value = 3, max_value = 11, step = 2)
+            hp.Int(f"filters_block_{i}", min_value = 32, max_value = 256, step = 32)
+            hp.Int(f"kernel_size_0_block_{i}", min_value = 3, max_value = 11, step = 2)
+            hp.Int(f"kernel_size_1_block_{i}", min_value = 3, max_value = 11, step = 2)
+            hp.Int(f"kernel_size_2_block_{i}", min_value = 3, max_value = 11, step = 2)
 
         for i in range(num_blocks):
             x = self.residual_block(x, 
@@ -119,7 +119,7 @@ class LSTM_FCN(keras_tuner.HyperModel):
 
     def build(self, hp):
 
-        input_trace = Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+        input_trace = Input(shape=(None,1), dtype='float32', name='input')
 
         # FCN Block
         kernel_size_0 = hp.Int(f"kernel_size_0", min_value = 3, max_value = 11, step = 2)
@@ -141,10 +141,9 @@ class LSTM_FCN(keras_tuner.HyperModel):
         gap = GlobalAveragePooling1D()(fcn_output)
 
         # LSTM Block
-        # Reshape for LSTM input
-        x = Reshape((QUIPU_LEN_CUT, 1))(input_trace)  # Adjust based on actual input requirement for LSTM
-        x = LSTM(hp.Int('lstm_units', min_value=32, max_value=256, step=32))(x)
-        lstm_output = Dropout(hp.Float('lstm_dropout', min_value=0.0, max_value=0.5, step=0.1))(x)
+        #masked_input = Masking(mask_value=0.0)(input_trace)
+        y = LSTM(hp.Int('lstm_units', min_value=32, max_value=256, step=32))(input_trace)#(masked_input)
+        lstm_output = Dropout(hp.Float('lstm_dropout', min_value=0.0, max_value=0.5, step=0.1))(y)
 
         # Concatenate FCN and LSTM outputs
         concatenated = concatenate([gap, lstm_output])
@@ -168,29 +167,35 @@ class Transformer(keras_tuner.HyperModel):
 
     def build(self, hp):
 
-        head_size = 32
+        MAX_SEQ_LEN = 1000
+        head_size = hp.Choice('head_size', values=[32, 64, 128, 256])
         num_heads = hp.Choice('num_heads', values=[2, 4, 8])
         ff_dim = hp.Int('ff_dim', min_value=256, max_value=1024, step=128)
         num_transformer_blocks = hp.Int('num_transformer_blocks', min_value=1, max_value=6, step=1)
         min_mlp_layers = 1
-        max_mlp_layers = 3
+        max_mlp_layers = 5
         mlp_layers = hp.Int("mlp_layers", min_mlp_layers, max_mlp_layers)
         mlp_dropout = hp.Float('mlp_dropout', min_value=0.1, max_value=0.5, step=0.1)
         dropout = hp.Float('dropout', min_value=0.1, max_value=0.5, step=0.1)
         embed_dim = hp.Choice('embed_dim', values=[128, 256, 512])
 
-        positional_encoding = self.get_positional_encoding(QUIPU_LEN_CUT, embed_dim)
-    
-        input_trace = keras.Input(shape=(QUIPU_LEN_CUT,1), dtype='float32', name='input')
+        input_trace = keras.Input(shape=(None,1), dtype='float32', name='input')
         x = input_trace
+
+        mask = Lambda(lambda x: tf.cast(tf.not_equal(x, 0), dtype='float32'))(x)
+        mask = tf.squeeze(mask, -1)
         
-        pos_encoding = layers.Embedding(input_dim=QUIPU_LEN_CUT, output_dim=embed_dim, weights=[positional_encoding], trainable=False)(tf.range(0, QUIPU_LEN_CUT))
-        x += pos_encoding
+        positional_encoding = self.get_positional_encoding(MAX_SEQ_LEN, embed_dim)
+        pos_encoding_layer = Lambda(
+            lambda x: positional_encoding[:tf.shape(x)[1], :],
+            output_shape=lambda input_shape: (input_shape[1], embed_dim)
+        )
+        x += pos_encoding_layer(x)
 
         for _ in range(num_transformer_blocks):
-            x = self.transformer_encoder(x, head_size, num_heads, ff_dim, dropout)
+            x = self.transformer_encoder(x, head_size, num_heads, ff_dim, dropout, mask)
 
-        x = layers.GlobalAveragePooling1D(data_format="channels_last")(x)
+        x = GlobalAveragePooling1D(data_format="channels_last")(x)
 
         for i in range(max_mlp_layers):
             hp.Choice(f"mlp_dim_{i}", values=[64,128,256])
@@ -213,11 +218,13 @@ class Transformer(keras_tuner.HyperModel):
         return model
     
     @staticmethod
-    def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
+    def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0, mask=None):
+        attention_mask = mask[:, tf.newaxis, tf.newaxis, :]
+
         # Multi-Head Attention and Normalization
         x = MultiHeadAttention(
             key_dim=head_size, num_heads=num_heads, dropout=dropout
-        )(inputs, inputs)
+        )(inputs, inputs, attention_mask=attention_mask)
         x = Dropout(dropout)(x)
         x = LayerNormalization(epsilon=1e-6)(x)
         res = x + inputs  # Add & Norm
