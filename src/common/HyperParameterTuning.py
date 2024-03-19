@@ -8,20 +8,21 @@ import pandas as pd
 from params import QUIPU_LEN_CUT, QUIPU_N_LABELS
 
 class CVTuner(kerastuner.engine.tuner.Tuner):
-  def run_trial(self, trial, batch_size=128, n_epochs_max=1, n_splits = 5):
+  def run_trial(self, trial, batch_size=128, n_epochs_max=1, n_splits = 5, skip_folds = 0):
     mt = ModelTrainer(n_epochs_max = n_epochs_max, use_weights=True, use_brow_aug = True, batch_size=batch_size, model_name=self.hypermodel.__class__.__name__)
-    train_acc, valid_acc, test_acc, n_epoch = mt.hpo_crossval(trial, self.hypermodel, n_splits=n_splits, data_folder=f'../../results/QuipuTrainedWithES_trial_{trial.trial_id}.csv')
+    train_acc, valid_acc, test_acc, n_epoch = mt.hpo_crossval(trial, self.hypermodel, n_splits=n_splits, skip_folds = skip_folds, data_folder=f'../../results/QuipuTrainedWithES_trial_{trial.trial_id}.csv')
 
     self.oracle.update_trial(trial.trial_id, {'val_accuracy': test_acc})
 
 class Tuner():
 
-  def __init__(self, model, search_function = "random", n_epochs_max = 10, max_trials = 10, batch_size = 128):
+  def __init__(self, model, search_function = "random", n_epochs_max = 10, max_trials = 10, batch_size = 128, skip_folds = 0):
     self.model = model
     self.search_function = search_function
     self.n_epochs_max = n_epochs_max
     self.max_trials = max_trials
     self.batch_size = batch_size
+    self.skip_folds = skip_folds
    
   def get_tuner(self):
     oracle = None
@@ -40,8 +41,9 @@ class Tuner():
 
   def tune(self):
     tuner = self.get_tuner()
-    tuner.search(batch_size=self.batch_size,
-                n_epochs_max=self.n_epochs_max)    
+    tuner.search(batch_size = self.batch_size,
+                n_epochs_max = self.n_epochs_max,
+                skip_folds = self.skip_folds)    
     tuner.results_summary()
 
   def summary(self):

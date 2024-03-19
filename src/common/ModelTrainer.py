@@ -49,7 +49,7 @@ class ModelTrainer():
         return '[{:s}]'.format(' '.join(['{:.3f}'.format(x) for x in num_list]))
     
     # Stratified KFold cross validation
-    def hpo_crossval(self, trial, hypermodel, n_splits=5, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
+    def hpo_crossval(self, trial, hypermodel, n_splits=5, skip_folds = 0, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
 
         cols = ["Fold", "Train Acc", "Validation Acc", "Test Acc", "N Epochs", "Runtime"]
         if self.track_losses:
@@ -70,6 +70,8 @@ class ModelTrainer():
 
         fold_index = 0
         for train_index, test_index in sgkf.split(X_trainSet, y_labels):
+
+            if(fold_index >= n_splits - skip_folds): break
             
             print(f"Starting fold {fold_index}")
 
