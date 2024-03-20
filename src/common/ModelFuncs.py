@@ -22,13 +22,13 @@ class FCN(keras_tuner.HyperModel):
         input_trace = Input(shape=(None,1), dtype='float32', name='input',)
         x = input_trace
 
-        min_layers = 4
+        #min_layers = 4
         max_layers = 8
-        num_layers = hp.Int("num_layers", min_layers, max_layers)
+        num_layers = max_layers#hp.Int("num_layers", min_layers, max_layers)
 
         for i in range(max_layers): #Because keras_tuner seems to have a bug
             hp.Choice(f"filters_block_{i}", [32, 64, 128, 256, 512])
-            hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=15, step=2)
+            hp.Int(f"kernel_size_block_{i}", min_value=3, max_value=13, step=2)
         
         for i in range(num_layers):
             x = Conv1D(hp.get(f"filters_block_{i}"), hp.get(f"kernel_size_block_{i}"), padding='same')(x)
@@ -40,7 +40,7 @@ class FCN(keras_tuner.HyperModel):
         output_barcode = Dense(QUIPU_N_LABELS, activation='softmax', name='output_barcode')(x)
         model = Model(inputs=input_trace, outputs=output_barcode)
 
-        learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
+        learning_rate = 0.001#hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
         model.compile(
             optimizer=Adam(learning_rate=learning_rate),
             loss="categorical_crossentropy",

@@ -26,7 +26,7 @@ from tensorflow.keras.utils import Sequence
 
 
 class ModelTrainer():
-    def __init__(self, use_fixed_length_data = True, use_brow_aug = False, n_epochs_max=100,lr = 1e-3,batch_size=128,early_stopping_patience=100,use_weights=False,track_losses=False, optimizer="Adam",momentum=None, model_name = "model"): #Opt_aug still has bugs, have to check
+    def __init__(self, use_fixed_length_data = True, use_brow_aug = False, n_epochs_max=100,lr = 1e-3,batch_size=128,early_stopping_patience=100,use_weights=False,track_losses=False, optimizer="Adam",momentum=None, model_name = "model", tb_folder = "default"): #Opt_aug still has bugs, have to check
         self.use_fixed_length_data = use_fixed_length_data
         self.use_brow_aug = use_brow_aug;
         self.dl=DataLoader();
@@ -44,6 +44,7 @@ class ModelTrainer():
         self.optimizer=optimizer;
         self.momentum=momentum;
         self.model_name = model_name
+        self.tb_folder = tb_folder
     
     def num_list_to_str(self,num_list):
         return '[{:s}]'.format(' '.join(['{:.3f}'.format(x) for x in num_list]))
@@ -103,7 +104,7 @@ class ModelTrainer():
 
         mean_results = df_results.mean(axis=0)
 
-        log_tensorboard_averages(get_log_dir(trial.trial_id, model_name=self.model_name), get_log_dir(trial.trial_id, model_name=self.model_name, tag="averages"))
+        log_tensorboard_averages(get_log_dir(trial.trial_id, self.tb_folder, model_name=self.model_name), get_log_dir(trial.trial_id, self.tb_folder, model_name=self.model_name, tag="averages"))
         
         return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
 
@@ -166,7 +167,7 @@ class ModelTrainer():
                 'val_accuracy': valid_res[1],
                 'runtime' : cumulative_runtime
             }
-            log_tensorboard(metrics, get_log_dir(trial, self.model_name, fold), n_epoch)
+            log_tensorboard(metrics, get_log_dir(trial, self.tb_folder, self.model_name, fold), n_epoch)
 
             # Early stopping condition
             if patience_count > self.early_stopping_patience or n_epoch == self.n_epochs_max - 1:
@@ -320,14 +321,13 @@ def log_tensorboard_averages(log_dir_from, log_dir_to):
     log_averaged_metrics(averaged_metrics, log_dir_to)
 
     
-def get_log_dir(trial_id, model_name, fold_index = None, tag = None):
+def get_log_dir(trial_id, base_dir, model_name, fold_index = None, tag = None):
     """Returns a unique log directory path for each trial and fold."""
-    base_dir = f"../../results/"
-    
+   
     if tag == None:
-        log_dir = os.path.join(base_dir, f"tb_logs/{model_name}/trial_{trial_id}")
+        log_dir = os.path.join(base_dir, f"{model_name}/trial_{trial_id}")
     else:
-        log_dir = os.path.join(base_dir, f"tb_logs/{model_name}_{tag}/trial_{trial_id}")
+        log_dir = os.path.join(base_dir, f"{model_name}_{tag}/trial_{trial_id}")
     
     if fold_index != None:
         log_dir = os.path.join(log_dir, f"fold_{fold_index}")
