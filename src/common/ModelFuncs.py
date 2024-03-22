@@ -53,32 +53,28 @@ class ResNet(keras_tuner.HyperModel):
 
     def build(self, hp):
 
+        num_initial_filters = hp.Choice("num_initial_filters", [16, 32, 64, 128])
+        initial_conv_kernel = hp.Choice("initial_conv_kernel", [0, 5, 7, 9])
+        kernel_size = hp.Choice("kernel_size", [3, 5, 7])
+        num_super_blocks = hp.Int("num_super_blocks", 2, 3)
+        num_blocks_per_super_block = hp.Int("num_blocks_per_super_block", 2, 4)
+
         input_trace = Input(shape=(None,1), dtype='float32', name='input')
-
         x = input_trace
+        if(initial_conv_kernel > 0):
+            x = Conv1D(num_initial_filters, initial_conv_kernel, padding = 'same',strides=2)(x)
+            x = BatchNormalization()(x)
+            x = Activation("relu")(x)
 
-        min_blocks = 3
-        max_blocks = 6
-        num_blocks = hp.Int("num_blocks", min_value = min_blocks, max_value = max_blocks, step = 1)
-
-        for i in range(max_blocks): #Because keras_tuner seems to have a bug
-            hp.Int(f"filters_block_{i}", min_value = 32, max_value = 256, step = 32)
-            hp.Int(f"kernel_size_0_block_{i}", min_value = 3, max_value = 11, step = 2)
-            hp.Int(f"kernel_size_1_block_{i}", min_value = 3, max_value = 11, step = 2)
-            hp.Int(f"kernel_size_2_block_{i}", min_value = 3, max_value = 11, step = 2)
-
-        for i in range(num_blocks):
-            x = self.residual_block(x, 
-                filters = hp.get(f"filters_block_{i}"), 
-                kernel_size_0 = hp.get(f"kernel_size_0_block_{i}"), 
-                kernel_size_1 = hp.get(f"kernel_size_1_block_{i}"), 
-                kernel_size_2 = hp.get(f"kernel_size_2_block_{i}"))
+        for i in range(num_super_blocks):
+            x = self.super_block(x, num_initial_filters, kernel_size, num_blocks_per_super_block, is_first_super_block = True if i == 0 else False)
 
         x = GlobalAveragePooling1D()(x)
+
         output_barcode = Dense(QUIPU_N_LABELS, activation='softmax', name='output_barcode')(x)
         model = Model(inputs=input_trace, outputs=output_barcode)
 
-        learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
+        learning_rate = 0.001#hp.Float("lr", min_value=1e-4, max_value=1e-2, sampling="log")
 
         model.compile(
             optimizer=Adam(learning_rate=learning_rate),
@@ -89,23 +85,29 @@ class ResNet(keras_tuner.HyperModel):
         return model
     
     @staticmethod
-    def residual_block(input_tensor, filters, kernel_size_0, kernel_size_1, kernel_size_2):
+    def super_block(input_tensor, filters, kernel_size, num_blocks, is_first_super_block = False):
+
+        x = ResNet.residual_block(input_tensor, filters, kernel_size, halve = False if is_first_super_block else True)
+        
+        for i in range(num_blocks - 1):
+            x = ResNet.residual_block(x, filters, kernel_size)
+        
+        return x
+    
+    @staticmethod
+    def residual_block(input_tensor, filters, kernel_size, halve = False):
+        
         # First component of the main path
-        x = Conv1D(filters=filters, kernel_size=kernel_size_0, padding='same')(input_tensor)
+        x = Conv1D(filters=filters, kernel_size=kernel_size, padding='same', strides = 2 if halve else 1)(input_tensor)
         x = BatchNormalization()(x)
         x = ReLU()(x)
 
         # Second component
-        x = Conv1D(filters=filters, kernel_size=kernel_size_1, padding='same')(x)
-        x = BatchNormalization()(x)
-        x = ReLU()(x)
-
-        # Third component
-        x = Conv1D(filters=filters, kernel_size=kernel_size_2, padding='same')(x)
+        x = Conv1D(filters=filters, kernel_size=kernel_size, padding='same')(x)
         x = BatchNormalization()(x)
 
         # Shortcut path
-        shortcut = Conv1D(filters=filters, kernel_size=1, padding='same')(input_tensor)
+        shortcut = Conv1D(filters=filters, kernel_size=1, padding='same', strides = 2 if halve else 1)(input_tensor)
         shortcut = BatchNormalization()(shortcut)
 
         # Adding shortcut to the main path
