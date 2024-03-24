@@ -101,9 +101,47 @@ def create_random_tuples(barcode,code_nanopores,meas_counts,min_perc,max_perc):
                 code_index=to_select[i]
                 tuples_test_list.append( (barcode,code_nanopores[code_index]) )
     return tuples_test_list;
+
+def create_deterministic_tuples(barcode, code_nanopores, meas_counts, min_perc, max_perc, seed=42):
+    rng = np.random.default_rng(seed)  # Create a new random generator instance with a seed
     
+    perc_ds = np.asarray(meas_counts) / np.sum(meas_counts) * 100
+    tuples_test_list = []
+    
+    if np.all(perc_ds > max_perc):
+        # If already picking one nanopore has a higher percentage than the max, picks the smallest one
+        tuples_test_list.append((barcode, code_nanopores[np.argmin(perc_ds)]))
+    else:
+        to_select = np.where(perc_ds < max_perc)[0][:]  # From the ones with low percentage
+        n_bits = len(to_select)  # n_bits to show all possible configurations
+        n_combinations_total = 2 ** len(to_select)
+        
+        comb_array = np.zeros((n_combinations_total, n_bits)).astype(bool)
+        comb_perc_acc = np.zeros((n_combinations_total,))
+        
+        for i in range(n_combinations_total):
+            # Express all the combinations in binary selector
+            format_str = '{0:0' + str(n_bits) + 'b}'
+            list_chars = list(format_str.format(i))
+            comb_array[i, :] = [char == '1' for char in list_chars]
+            idxs_picked = to_select[comb_array[i, :]]
+            comb_perc_acc[i] = np.sum(perc_ds[idxs_picked])  # The percentage of data used in dataset if configuration is picked
+        
+        # Keeps only combinations that satisfy the percentage range of the test dataset
+        comb_array_within_range = comb_array[np.logical_and(comb_perc_acc > min_perc, comb_perc_acc < max_perc), :]
+        
+        # Selects a deterministic "random" combination
+        selected_comb = rng.choice(len(comb_array_within_range), 1)[0]
+        
+        for i in range(len(to_select)):
+            if comb_array_within_range[selected_comb, i]:
+                code_index = to_select[i]
+                tuples_test_list.append((barcode, code_nanopores[code_index]))
+    
+    return tuples_test_list
+
 #Divides the dataset in test and train, generating random test sets in a way that the test dataset is 4-15% of the data and it is only from nanopores that are not present on the train dataset.
-def dataset_split(allDatasets,min_perc=4,max_perc=15): ## 4% because 010 only can pick 4%.
+def random_dataset_split(allDatasets,min_perc=4,max_perc=15): ## 4% because 010 only can pick 4%.
     barcodes=np.unique(allDatasets["barcode"].to_numpy());
     
     testSetIndex=[];
@@ -112,10 +150,32 @@ def dataset_split(allDatasets,min_perc=4,max_perc=15): ## 4% because 010 only ca
         code_nanopores=np.unique(code_ds["nanopore"].to_numpy());
         meas_counts= [ np.sum(code_ds["nanopore"]==i) for i in code_nanopores]
         tuples_test=create_random_tuples(barcode,code_nanopores,meas_counts,min_perc,max_perc)
+
+        for i in tuples_test:
+            testSetIndex.append(i)
+    
+    testSetSelection = allDatasets[["barcode", "nanopore"]]\
+                            .apply(tuple, axis = 1)\
+                            .isin(testSetIndex)
+    
+    testSet = allDatasets[ testSetSelection ]
+    trainSet = allDatasets[ ~ testSetSelection ]
+    
+    return trainSet,testSet
+    
+#Divides the dataset in test and train, generating random test sets in accordance to provided seed in a way that the test dataset is 4-15% of the data and it is only from nanopores that are not present on the train dataset.
+def dataset_split(allDatasets,min_perc=4,max_perc=15,seed=42): ## 4% because 010 only can pick 4%.
+    barcodes=np.unique(allDatasets["barcode"].to_numpy());
+    
+    testSetIndex=[];
+    for barcode in barcodes:
+        code_ds=allDatasets[allDatasets["barcode"]==barcode]
+        code_nanopores=np.unique(code_ds["nanopore"].to_numpy());
+        meas_counts= [ np.sum(code_ds["nanopore"]==i) for i in code_nanopores]
+        tuples_test=create_deterministic_tuples(barcode,code_nanopores,meas_counts,min_perc,max_perc,seed=42)
         for i in tuples_test:
             testSetIndex.append(i)
 
-    
     testSetSelection = allDatasets[["barcode", "nanopore"]]\
                             .apply(tuple, axis = 1)\
                             .isin(testSetIndex)

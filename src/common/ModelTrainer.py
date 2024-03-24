@@ -50,7 +50,7 @@ class ModelTrainer():
         return '[{:s}]'.format(' '.join(['{:.3f}'.format(x) for x in num_list]))
     
     # Stratified KFold cross validation
-    def hpo_crossval(self, trial, hypermodel, n_splits=5, skip_folds = 0, data_folder='../../results/QuipuTrainedWithES.csv', save_each_fold=False):
+    def hpo_crossval(self, trial, hypermodel, n_splits=5, skip_folds = 0):
 
         cols = ["Fold", "Train Acc", "Validation Acc", "Test Acc", "N Epochs", "Runtime"]
         if self.track_losses:
@@ -86,21 +86,10 @@ class ModelTrainer():
             runtime = time.time() - start_time
             
             row = [fold_index, train_acc, valid_acc, test_acc, n_epoch, runtime]
-            if self.track_losses:
-                row.extend([self.num_list_to_str(self.train_losses), self.num_list_to_str(self.train_aug_losses), self.num_list_to_str(self.valid_losses)])
-            temp_df = pd.DataFrame([row], columns=cols)
+            
             df_results.loc[len(df_results)] = row
             
-            if save_each_fold:
-                row_filename = f"{data_folder[:-4]}_fold{fold_index}.csv"
-                df_row = pd.DataFrame([row], columns=cols)
-                df_row.to_csv(row_filename, index=False)
-
             fold_index += 1
-
-        df_results.loc[len(df_results)] = df_results.mean(axis=0)
-
-        ##df_results.to_csv(data_folder, index=False)
 
         mean_results = df_results.mean(axis=0)
 
@@ -109,10 +98,6 @@ class ModelTrainer():
         return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
 
     def hpo_crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial, fold, batch_size_val=512):
-
-        # Reshape the validation datasets to fit the model's input shape
-        #X_valid_rs = X_valid.reshape(self.shapeX)
-        #Y_valid_rs = Y_valid.reshape(self.shapeY)
 
         # Initialize variables for early stopping and best model weights tracking
         best_weights = model.get_weights()
@@ -142,13 +127,16 @@ class ModelTrainer():
             preparation_time = time.time() - start_time
 
             # Fit the model for one epoch
-            out_history = model.fit(x = X, y = Y_train, batch_size = self.batch_size, shuffle=True, epochs=1, verbose=1, class_weight=weights_final)
+            out_history = model.fit(x = X, y = Y_train, 
+                                    batch_size = self.batch_size, 
+                                    shuffle=True, 
+                                    epochs=1,
+                                    verbose=1,
+                                    validation_data=(X_valid,  Y_valid),
+                                    class_weight=weights_final)
 
-            # Evaluate on the validation dataset
-            print("Validation ds:")
-            valid_res = model.evaluate(x=X_valid, y=Y_valid, verbose=True, batch_size=batch_size_val)
-            if valid_res[0] < best_valid_loss:
-                best_valid_loss = valid_res[0]
+            if out_history.history['val_loss'][0] < best_valid_loss:
+                best_valid_loss = out_history.history['val_loss'][0]
                 patience_count = 0
                 best_weights = model.get_weights()
             else:
@@ -162,9 +150,9 @@ class ModelTrainer():
             # TensorBoard Logging
             metrics = {
                 'train_loss': out_history.history['loss'][0],
-                'val_loss': valid_res[0],
+                'val_loss': out_history.history['val_loss'][0],
                 'train_accuracy': out_history.history['accuracy'][0],
-                'val_accuracy': valid_res[1],
+                'val_accuracy': out_history.history['val_accuracy'][0],
                 'runtime' : cumulative_runtime
             }
             log_tensorboard(metrics, get_log_dir(trial, self.tb_folder, self.model_name, fold), n_epoch)
@@ -174,14 +162,6 @@ class ModelTrainer():
                 print("Stopping learning because of early stopping:")
                 model.set_weights(best_weights)
                 break
-
-            # Optionally track losses for analysis
-            if self.track_losses:
-                self.valid_losses.append(valid_res[0])
-                train_res = model.evaluate(x=X_train.reshape(self.shapeX), y=Y_train, batch_size=batch_size_val)
-                self.train_losses.append(train_res[0])
-                self.train_aug_losses.append(out_history.history['loss'][0])
-
 
         # Evaluate the model on training, validation, and test datasets to get the final accuracies
         train_acc, valid_acc, test_acc = self.eval_model_and_print_results(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
