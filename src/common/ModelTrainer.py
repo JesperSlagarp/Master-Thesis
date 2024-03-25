@@ -52,9 +52,8 @@ class ModelTrainer():
     # Stratified KFold cross validation
     def hpo_crossval(self, trial, hypermodel, n_splits=5, skip_folds = 0):
 
-        cols = ["Fold", "Train Acc", "Validation Acc", "Test Acc", "N Epochs", "Runtime"]
-        if self.track_losses:
-            cols.extend(["Train Losses", "Train Aug Losses", "Valid Losses"])
+        cols = ["Fold", "Train Acc", "Train Loss", "Valid Acc", "Valid Loss", "Test Acc", "Test Loss", "N Epochs", "Runtime"]
+        
         df_results = pd.DataFrame(columns=cols)
         
         if self.use_fixed_length_data:
@@ -82,10 +81,15 @@ class ModelTrainer():
             model = hypermodel.build(trial.hyperparameters)
 
             start_time = time.time()
-            train_acc, valid_acc, test_acc, n_epoch = self.hpo_crossval_train_es(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial.trial_id, fold_index)
+            train_acc, train_loss, valid_acc, valid_loss, test_acc, test_loss, n_epoch = self.train_es(model, 
+                                                                                                                    X_train, Y_train,
+                                                                                                                    X_valid, Y_valid, 
+                                                                                                                    X_test, Y_test, 
+                                                                                                                    trial.trial_id, 
+                                                                                                                    fold_index)
             runtime = time.time() - start_time
             
-            row = [fold_index, train_acc, valid_acc, test_acc, n_epoch, runtime]
+            row = [fold_index, train_acc, train_loss, valid_acc, valid_loss, test_acc, test_loss, n_epoch, runtime]
             
             df_results.loc[len(df_results)] = row
             
@@ -95,9 +99,25 @@ class ModelTrainer():
 
         log_tensorboard_averages(get_log_dir(trial.trial_id, self.tb_folder, model_name=self.model_name), get_log_dir(trial.trial_id, self.tb_folder, model_name=self.model_name, tag="averages"))
         
-        return mean_results['Train Acc'], mean_results['Validation Acc'], mean_results['Test Acc'], mean_results['N Epochs']
+        return mean_results['Train Acc'], mean_results['Train Loss'], mean_results['Valid Acc'], mean_results['Valid Loss'], mean_results['Test Acc'], mean_results["Test Loss"], mean_results['N Epochs']
 
-    def hpo_crossval_train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial, fold, batch_size_val=512):
+    def start_train_es(self, model, trial = 0): 
+
+        if self.use_fixed_length_data:
+            X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy_quipu(cut = True)
+        else:
+            X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy_quipu(cut = False)
+
+        train_acc, train_loss, valid_acc, valid_loss, test_acc, test_loss, n_epoch = self.train_es(model, 
+                                                                                                   X_train, Y_train,
+                                                                                                   X_valid, Y_valid, 
+                                                                                                   X_test, Y_test, 
+                                                                                                   trial)
+        
+        return train_acc, train_loss, valid_acc, valid_loss, test_acc, test_loss, n_epoch
+
+        
+    def train_es(self, model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test, trial, fold = None):
 
         # Initialize variables for early stopping and best model weights tracking
         best_weights = model.get_weights()
@@ -133,7 +153,8 @@ class ModelTrainer():
                                     epochs=1,
                                     verbose=1,
                                     validation_data=(X_valid,  Y_valid),
-                                    class_weight=weights_final)
+                                    class_weight=weights_final
+                                    )
 
             if out_history.history['val_loss'][0] < best_valid_loss:
                 best_valid_loss = out_history.history['val_loss'][0]
@@ -155,7 +176,7 @@ class ModelTrainer():
                 'val_accuracy': out_history.history['val_accuracy'][0],
                 'runtime' : cumulative_runtime
             }
-            log_tensorboard(metrics, get_log_dir(trial, self.tb_folder, self.model_name, fold), n_epoch)
+            log_tensorboard(metrics, get_log_dir(trial, self.tb_folder, self.model_name, fold_index=fold), n_epoch)
 
             # Early stopping condition
             if patience_count > self.early_stopping_patience or n_epoch == self.n_epochs_max - 1:
@@ -164,59 +185,8 @@ class ModelTrainer():
                 break
 
         # Evaluate the model on training, validation, and test datasets to get the final accuracies
-        train_acc, valid_acc, test_acc = self.eval_model_and_print_results(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
-        return train_acc, valid_acc, test_acc, n_epoch
-    
-    def train_es(self, model, batch_size_val=512): #Runs training with early stopping, more controlled manner than quipus original
-
-        X_train,X_valid,Y_train,Y_valid,X_test,Y_test=self.dl.get_datasets_numpy(repeat_classes= (not self.use_weights) ); #When weights are used 
-        #if self.optimizer=="Adam":
-        #    model.compile(loss = 'categorical_crossentropy', optimizer = Adam(learning_rate=self.lr),metrics = ['accuracy'])
-        #else:
-        #    model.compile(loss = 'categorical_crossentropy', optimizer = SGD(learning_rate=self.lr,momentum=self.momentum),metrics = ['accuracy'])
-        X_valid_rs = X_valid.reshape(self.shapeX); Y_valid_rs = Y_valid.reshape(self.shapeY)
-        best_weights=model.get_weights();best_valid_loss=1e6;patience_count=0;
-        weights=class_weight.compute_class_weight(class_weight ='balanced',classes = np.arange(QUIPU_N_LABELS), y =np.argmax(Y_train,axis=1))
-        weights=dict(zip(np.arange(QUIPU_N_LABELS), weights))
-        weights_final= weights if self.use_weights else None;
-        self.train_losses=[];
-        self.valid_losses=[];
-        self.train_aug_losses=[];
-        #ipdb.set_trace();
-        for n_epoch in range(self.n_epochs_max):
-            print("=== Epoch:", n_epoch,"===")
-            start_time = time.time()
-            X= self.da.all_augments(X_train) if self.use_brow_aug else self.da.quipu_augment(X_train);
-            preparation_time = time.time() - start_time
-            # Fit the model
-            out_history = model.fit( 
-                x = X.reshape(self.shapeX), y = Y_train.reshape(self.shapeY), 
-                batch_size=self.batch_size, shuffle = True, epochs=1,verbose = 1, class_weight = weights_final, 
-            )
-            
-            print("Validation ds:")
-            valid_res=model.evaluate(x = X_valid_rs,   y = Y_valid_rs,   verbose=True,batch_size=batch_size_val);
-            if valid_res[0]<best_valid_loss:
-                best_valid_loss=valid_res[0]
-                patience_count=0;
-                best_weights=model.get_weights()
-            else:
-                patience_count+=1;
-            #Others
-            training_time = time.time() - start_time - preparation_time
-            if self.track_losses:
-                self.valid_losses.append(valid_res[0]);
-                train_res=model.evaluate(x = X_train.reshape(self.shapeX),   y = Y_train, batch_size=batch_size_val);
-                self.train_losses.append(train_res[0]);
-                self.train_aug_losses.append(out_history.history['loss'][0]);
-            
-            print('  prep time: %3.1f sec' % preparation_time, '  train time: %3.1f sec' % training_time)
-            if patience_count>self.early_stopping_patience or n_epoch==self.n_epochs_max-1:
-                print("Stopping learning because of early stopping:")
-                model.set_weights(best_weights)
-                break
-        train_acc,valid_acc,test_acc=self.eval_model_and_print_results(model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test)
-        return train_acc, valid_acc, test_acc, n_epoch
+        train_acc, train_loss, valid_acc, valid_loss, test_acc, test_loss = self.eval_model_and_print_results(model, X_train, Y_train, X_valid, Y_valid, X_test, Y_test)
+        return train_acc, train_loss, valid_acc, valid_loss, test_acc, test_loss, n_epoch
     
     ##Quipu base code to compare
     def quipu_def_train(self,model,n_epochs=60,with_brow_aug=False):
@@ -258,10 +228,10 @@ class ModelTrainer():
                   '  train time: %3.1f sec' % training_time)
             print('  loss: %5.3f' % out_history.history['loss'][0] ,'  acc: %5.4f' % out_history.history['accuracy'][0] ,'  val_acc: %5.4f' % out_history.history['val_accuracy'][0])
             #print('  loss: %5.3f' % out_history.history['loss'][0] ,'  acc: %5.4f' % out_history.history['accuracy'][0] ,'  val_acc: %5.4f' % out_history.history['val_acc'][0])
-        train_acc,valid_acc,test_acc=self.eval_model_and_print_results(model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test)
+        train_acc,valid_acc,test_acc=self.quipu_eval_model_and_print_results(model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test)
         return train_acc, valid_acc, test_acc
     
-    def eval_model_and_print_results(self,model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test):
+    def quipu_eval_model_and_print_results(self,model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test):
         print("       [ loss , accuracy ]")
         train_results= model.evaluate(x = X_train, y = Y_train, verbose=False);
         valid_results=model.evaluate(x = X_valid,   y = Y_valid,   verbose=False)
@@ -272,6 +242,19 @@ class ModelTrainer():
         print("Test :", test_results )
         train_acc= train_results[1];valid_acc= valid_results[1];test_acc= test_results[1];
         return train_acc,valid_acc,test_acc
+    
+    def eval_model_and_print_results(self,model,X_train,Y_train,X_valid,Y_valid,X_test,Y_test):
+        print("       [ loss , accuracy ]")
+        train_results = model.evaluate(x = X_train, y = Y_train, verbose=False);
+        valid_results = model.evaluate(x = X_valid, y = Y_valid, verbose=False)
+        test_results = model.evaluate(x = X_test, y = Y_test, verbose=False)
+        
+        print("Train:", train_results )
+        print("Validation  :", valid_results )
+        print("Test :", test_results )
+        train_acc = train_results[1];valid_acc= valid_results[1];test_acc= test_results[1];
+        train_loss = train_results[0];valid_loss= valid_results[0];test_loss= test_results[0];
+        return train_acc, train_loss, valid_acc, valid_loss, test_acc, test_loss
     
 def log_tensorboard(metrics, log_dir, step):
         """

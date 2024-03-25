@@ -30,8 +30,8 @@ class DataLoader():
         X_train,X_valid,Y_train,Y_valid=self.divide_numpy_ds(X_train,Y_train,1-validation_prop,keep_perc_classes=True,repeat_classes=repeat_classes);
         return X_train,X_valid,Y_train,Y_valid,X_test,Y_test
         
-    def get_datasets_numpy_quipu(self,validation_prop=QUIPU_VALIDATION_PROP_DEF): #Gets the numpy arrays for the NN as it is done in Quipus code, with train, validation and test sets
-        df_train,df_test=dataset_split(self.df_cut,min_perc=self.min_perc_test,max_perc=self.max_perc_test);
+    def get_datasets_numpy_quipu(self,validation_prop=QUIPU_VALIDATION_PROP_DEF, cut = True): #Gets the numpy arrays for the NN as it is done in Quipus code, with train, validation and test sets
+        df_train,df_test=dataset_split(self.df_cut if cut == True else self.df_padded, min_perc=self.min_perc_test,max_perc=self.max_perc_test);
         X_train,Y_train=self.quipu_df_to_numpy(df_train);X_test,Y_test=self.quipu_df_to_numpy(df_test);
         X_train,X_valid,Y_train,Y_valid=self.divide_numpy_ds(X_train,Y_train,1-validation_prop);
         return X_train,X_valid,Y_train,Y_valid,X_test,Y_test
@@ -43,18 +43,6 @@ class DataLoader():
         Y_onehot = np.zeros((Y_label.size, Y_label.max() + 1))
         Y_onehot[np.arange(Y_label.size), Y_label] = 1
         return X_numpy,Y_onehot;
-
-    def quipu_df_to_numpy_variable(self, df):
-        # Keep X as a list of numpy arrays (or lists) to preserve variable lengths
-        X_numpy = list(df.trace.values)
-        
-        # Process barcodes to one-hot encoding as before
-        Y_barcode = np.vstack(df.barcode.values)
-        Y_label = np.asarray([int(str(i[0]), 2) for i in Y_barcode])
-        Y_onehot = np.zeros((Y_label.size, Y_label.max() + 1))
-        Y_onehot[np.arange(Y_label.size), Y_label] = 1
-        
-        return X_numpy, Y_onehot
 
     def divide_numpy_ds(self,X,Y,prop,keep_perc_classes=False,repeat_classes=False): #Divides train in train and validation. Prop indicates proportion of train ds
     #keep perc classes assures that the classes are equally percentally distributed in train and valid dataset.

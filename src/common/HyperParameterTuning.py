@@ -10,9 +10,9 @@ from params import QUIPU_LEN_CUT, QUIPU_N_LABELS
 class CVTuner(kerastuner.engine.tuner.Tuner):
   def run_trial(self, trial, batch_size=128, n_epochs_max=1, n_splits = 5, skip_folds = 0, search_function = "default"):
     mt = ModelTrainer(n_epochs_max = n_epochs_max, use_weights=True, use_brow_aug = True, batch_size=batch_size, model_name=self.hypermodel.__class__.__name__, tb_folder=f"../../results/tb_logs/{search_function}/")
-    train_acc, valid_acc, test_acc, n_epoch = mt.hpo_crossval(trial, self.hypermodel, n_splits=n_splits, skip_folds = skip_folds)
+    _, _, _, val_loss, _, _, _ = mt.hpo_crossval(trial, self.hypermodel, n_splits=n_splits, skip_folds = skip_folds)
 
-    self.oracle.update_trial(trial.trial_id, {'val_accuracy': test_acc})
+    self.oracle.update_trial(trial.trial_id, {'val_loss': val_loss})
 
 class Tuner():
 
@@ -27,11 +27,11 @@ class Tuner():
   def get_tuner(self):
     oracle = None
     if self.search_function == "random":
-        oracle = kerastuner.oracles.RandomSearchOracle(objective='val_accuracy',max_trials=self.max_trials)
+        oracle = kerastuner.oracles.RandomSearchOracle(objective='val_loss',max_trials=self.max_trials)
     elif self.search_function == "bayesian":
-      oracle = kerastuner.oracles.BayesianOptimizationOracle(objective='val_accuracy',max_trials=self.max_trials)
+      oracle = kerastuner.oracles.BayesianOptimizationOracle(objective='val_loss',max_trials=self.max_trials)
     else:
-      oracle = kerastuner.oracles.RandomSearchOracle(objective='val_accuracy',max_trials=self.max_trials)
+      oracle = kerastuner.oracles.RandomSearchOracle(objective='val_loss',max_trials=self.max_trials)
     return CVTuner(
             hypermodel=self.model,
             overwrite=False,
