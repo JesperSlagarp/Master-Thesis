@@ -9,7 +9,7 @@ from params import QUIPU_LEN_CUT, QUIPU_N_LABELS
 
 class CVTuner(kerastuner.engine.tuner.Tuner):
   def run_trial(self, trial, batch_size=128, n_epochs_max=1, n_splits = 5, skip_folds = 0, search_function = "default"):
-    mt = ModelTrainer(n_epochs_max = n_epochs_max, use_weights=True, use_brow_aug = True, batch_size=batch_size, model_name=self.hypermodel.__class__.__name__, tb_folder=f"../../results/tb_logs/{search_function}/")
+    mt = ModelTrainer(early_stopping_patience = 20, n_epochs_max = n_epochs_max, use_weights=True, use_brow_aug = True, batch_size=batch_size, model_name=self.hypermodel.__class__.__name__, tb_folder=f"../../results/tb_logs/{search_function}/")
     _, _, _, val_loss, _, _, _ = mt.hpo_crossval(trial, self.hypermodel, n_splits=n_splits, skip_folds = skip_folds)
 
     self.oracle.update_trial(trial.trial_id, {'val_loss': val_loss})

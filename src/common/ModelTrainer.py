@@ -23,7 +23,7 @@ from DatasetFuncs import dataset_split
 import ipdb, os
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.utils import Sequence
-
+from sklearn.metrics import confusion_matrix
 
 class ModelTrainer():
     def __init__(self, use_fixed_length_data = True, use_brow_aug = False, n_epochs_max=100,lr = 1e-3,batch_size=128,early_stopping_patience=100,use_weights=False,track_losses=False, optimizer="Adam",momentum=None, model_name = "model", tb_folder = "default"): #Opt_aug still has bugs, have to check

@@ -56,8 +56,10 @@ class ResNet(keras_tuner.HyperModel):
         num_initial_filters = hp.Choice("num_initial_filters", [16, 32, 64])
         initial_conv_kernel = hp.Choice("initial_conv_kernel", [0, 5, 7, 9])
         kernel_size = hp.Choice("kernel_size", [3, 5, 7])
-        num_super_blocks = hp.Int("num_super_blocks", 2, 4)
-        num_blocks_per_super_block = hp.Int("num_blocks_per_super_block", 2, 4)
+        max_super_blocks = 5
+        min_super_blocks = 2
+        num_super_blocks = hp.Int("num_super_blocks", min_super_blocks, max_super_blocks)
+        #num_blocks_per_super_block = hp.Int("num_blocks_per_super_block", 2, 4)
 
         input_trace = Input(shape=(None,1), dtype='float32', name='input')
         x = input_trace
@@ -66,8 +68,11 @@ class ResNet(keras_tuner.HyperModel):
             x = BatchNormalization()(x)
             x = Activation("relu")(x)
 
+        for i in range(max_super_blocks):
+            hp.Int(f"num_blocks_super_block_{i}", 2, 6)
+
         for i in range(num_super_blocks):
-            x = self.super_block(x, num_initial_filters * pow(2, i)  , kernel_size, num_blocks_per_super_block, is_first_super_block = True if i == 0 else False)
+            x = self.super_block(x, num_initial_filters * pow(2, i)  , kernel_size, hp.get(f"num_blocks_super_block_{i}"), is_first_super_block = True if i == 0 else False)
 
         x = GlobalAveragePooling1D()(x)
 
